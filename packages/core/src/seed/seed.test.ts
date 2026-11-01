@@ -204,7 +204,6 @@ describe('invariant failures', () => {
       'refund balance',
       "UPDATE refunds SET amount_paise = 900000000 WHERE id = 'RF-O-EDGE-PARTIAL-REFUND'",
     ],
-    ['missing invoice', "DELETE FROM invoices WHERE order_id = 'O-EDGE-PARTIAL-REFUND'"],
     [
       'invalid event transition',
       "UPDATE order_events SET to_status = 'delivered' WHERE order_id = 'O-EDGE-INJECTION'",
@@ -307,4 +306,13 @@ describe('seed configuration and reset', () => {
       process.exitCode = previous;
     }
   });
+});
+
+it('invoice deletion is rejected before it can corrupt the seeded dataset', () => {
+  const db = seeded();
+  const before = checkSeedInvariants(db);
+  expect(() => db.exec("DELETE FROM invoices WHERE order_id = 'O-EDGE-PARTIAL-REFUND'")).toThrow(
+    /immutable/,
+  );
+  expect(checkSeedInvariants(db)).toEqual(before);
 });

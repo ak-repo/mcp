@@ -413,7 +413,10 @@ describe('invoices', () => {
     ).toBe('I-existing');
     f.write.prepare("UPDATE delivery_partners SET status = 'busy' WHERE id = 'DP-1'").run();
     const next = f.addOrder({ status: 'out_for_delivery', delivery: 'out_for_delivery' });
-    f.write.prepare("UPDATE invoices SET invoice_no = 'INV-20261101-9007199254740991'").run();
+    const historical = f.addOrder({ status: 'delivered', delivery: 'delivered' });
+    f.write
+      .prepare('INSERT INTO invoices VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('I-exhausted', historical, 'INV-20261101-9007199254740991', 1000, 0, 0, 0, 1000, AT);
     const before = snapshot();
     expect(() =>
       f.services.order.advanceStatus({
@@ -557,27 +560,24 @@ describe('read services, validation and audit', () => {
       >[0]),
     ).toThrow(expect.objectContaining({ code: ErrorCode.VALIDATION }));
     const orderId = f.addOrder();
-    f.write
-      .prepare(
-        'INSERT INTO payments SELECT ?, order_id, method, status, amount_paise, txn_ref FROM payments WHERE order_id = ?',
-      )
-      .run('P-duplicate', orderId);
-    expect(() => f.services.order.getOrder(orderId)).toThrow(
-      expect.objectContaining({ code: ErrorCode.CONFLICT }),
-    );
-    f.write.prepare("DELETE FROM payments WHERE id = 'P-duplicate'").run();
+    expect(() =>
+      f.write
+        .prepare(
+          'INSERT INTO payments SELECT ?, order_id, method, status, amount_paise, txn_ref FROM payments WHERE order_id = ?',
+        )
+        .run('P-duplicate', orderId),
+    ).toThrow(/UNIQUE/);
     f.write.prepare("UPDATE customers SET email = 'invalid'").run();
     expect(() => f.services.order.getOrder(orderId)).toThrow(
       expect.objectContaining({ code: ErrorCode.INTERNAL }),
     );
-    f.write
-      .prepare(
-        'INSERT INTO deliveries SELECT ?, order_id, partner_id, status, eta_min, assigned_at, picked_up_at, delivered_at FROM deliveries WHERE order_id = ?',
-      )
-      .run('D-duplicate', orderId);
-    expect(() => f.services.delivery.trackDelivery(orderId)).toThrow(
-      expect.objectContaining({ code: ErrorCode.CONFLICT }),
-    );
+    expect(() =>
+      f.write
+        .prepare(
+          'INSERT INTO deliveries SELECT ?, order_id, partner_id, status, eta_min, assigned_at, picked_up_at, delivered_at FROM deliveries WHERE order_id = ?',
+        )
+        .run('D-duplicate', orderId),
+    ).toThrow(/UNIQUE/);
   });
 
   it('refuses corrupt cached display amounts and cross-order refund associations', () => {

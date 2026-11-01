@@ -128,15 +128,13 @@ describe('sales metrics', () => {
       expect.objectContaining({ code: ErrorCode.LIMIT_EXCEEDED }),
     );
     f.write.prepare('UPDATE orders SET total_paise = 100').run();
-    f.write
-      .prepare(
-        'INSERT INTO deliveries SELECT ?, order_id, partner_id, status, eta_min, assigned_at, picked_up_at, delivered_at FROM deliveries WHERE order_id = ?',
-      )
-      .run('D-duplicate', orderId);
-    expect(() => f.services.metrics.getSalesSummary(filters)).toThrow(
-      expect.objectContaining({ code: ErrorCode.CONFLICT }),
-    );
-    f.write.prepare("DELETE FROM deliveries WHERE id = 'D-duplicate'").run();
+    expect(() =>
+      f.write
+        .prepare(
+          'INSERT INTO deliveries SELECT ?, order_id, partner_id, status, eta_min, assigned_at, picked_up_at, delivered_at FROM deliveries WHERE order_id = ?',
+        )
+        .run('D-duplicate', orderId),
+    ).toThrow(/UNIQUE/);
     f.write.prepare("UPDATE deliveries SET delivered_at = '2026-11-01T10:00:00.000Z'").run();
     expect(() => f.services.metrics.getSalesSummary(filters)).toThrow(AppError);
   });

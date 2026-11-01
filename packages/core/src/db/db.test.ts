@@ -1,3 +1,6 @@
+import { createSeedData } from '../seed/factories.js';
+import { insertSeedData } from '../seed/storage.js';
+import { checkSeedInvariants } from '../seed/invariants.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -321,7 +324,7 @@ describe('database constraints', () => {
       for (const fk of foreignKeys) {
         expect(() =>
           db.prepare(`UPDATE ${table} SET ${fk.from} = ?`).run('missing-parent'),
-        ).toThrow(/FOREIGN KEY/);
+        ).toThrow(table === 'invoices' ? /immutable/ : /FOREIGN KEY/);
       }
     }
     expect(() => db.exec("DELETE FROM customers WHERE id = 'C-1'")).toThrow(/FOREIGN KEY/);
@@ -385,9 +388,76 @@ describe('database constraints', () => {
       "UPDATE tool_call_log SET args_json = 'broken'",
       "UPDATE idempotency_keys SET response_json = 'broken'",
       "UPDATE idempotency_keys SET request_hash = 'bad'",
-      "UPDATE invoices SET invoice_no = 'INV-invalid'",
-      "UPDATE invoices SET invoice_no = 'INV-20261101-0001x'",
     ])
       expect(() => db.exec(sql)).toThrow(/CHECK/);
   });
+});
+
+describe('integrity migration', () => {
+  it('rejects duplicate deliveries and payments and all invoice changes', () => {
+    fixture();
+    for (const table of ['deliveries', 'payments'])
+      expect(() => insert(db, table, { ...rows[table], id: 'duplicate' })).toThrow(/UNIQUE/);
+    for (const sql of ['UPDATE invoices SET total_paise = total_paise', 'DELETE FROM invoices'])
+      expect(() => db.exec(sql)).toThrow(/immutable/);
+    for (const invoice_no of ['INV-invalid', 'INV-20261101-0001x']) {
+      db.prepare(
+        'INSERT INTO orders SELECT ?, customer_id, restaurant_id, address_id, status, subtotal_paise, tax_paise, delivery_fee_paise, platform_fee_paise, discount_paise, total_paise, notes, cancel_reason, placed_at, updated_at FROM orders LIMIT 1',
+      ).run(invoice_no);
+      expect(() =>
+        insert(db, 'invoices', {
+          ...rows['invoices'],
+          id: invoice_no,
+          order_id: invoice_no,
+          invoice_no,
+        }),
+      ).toThrow(/CHECK/);
+    }
+    const indexes = db.prepare('PRAGMA index_list(payments)').all() as {
+      name: string;
+      unique: number;
+    }[];
+    expect(indexes.filter((row) => row.name === 'idx_payments_order_id')).toEqual([
+      expect.objectContaining({ unique: 1 }),
+    ]);
+  });
+  it('upgrades a populated v1 database without changing content and protects the new checksum', () => {
+    const path = migrationDirectory();
+    migrate(db, path);
+    db.transaction(() => insertSeedData(db, createSeedData()))();
+    const before = checkSeedInvariants(db);
+    copyFileSync(
+      join(DEFAULT_MIGRATIONS_DIRECTORY, '0002_integrity.sql'),
+      join(path, '0002_integrity.sql'),
+    );
+    expect(migrate(db, path)).toEqual(['0002_integrity.sql']);
+    expect(checkSeedInvariants(db)).toEqual(before);
+    expect(migrate(db, path)).toEqual([]);
+    writeFileSync(
+      join(path, '0002_integrity.sql'),
+      readFileSync(join(path, '0002_integrity.sql'), 'utf8') + '\n-- changed',
+    );
+    expect(() => migrate(db, path)).toThrow(expect.objectContaining({ code: ErrorCode.CONFLICT }));
+  });
+  it.each(['deliveries', 'payments'])(
+    'rolls back the integrity migration when legacy %s contain duplicates',
+    (table) => {
+      const path = migrationDirectory();
+      migrate(db, path);
+      db.transaction(() => {
+        for (const [table, row] of Object.entries(rows)) insert(db, table, row);
+      })();
+      insert(db, table, { ...rows[table], id: 'duplicate' });
+      copyFileSync(
+        join(DEFAULT_MIGRATIONS_DIRECTORY, '0002_integrity.sql'),
+        join(path, '0002_integrity.sql'),
+      );
+      expect(() => migrate(db, path)).toThrow(/UNIQUE/);
+      expect(db.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: 1 });
+      expect(
+        db.prepare("SELECT name FROM sqlite_master WHERE name='idx_deliveries_order_id'").get(),
+      ).toBeUndefined();
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger'").all()).toEqual([]);
+    },
+  );
 });
