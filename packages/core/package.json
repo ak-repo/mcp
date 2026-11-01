@@ -17,7 +17,8 @@
     "typecheck": "tsc -b tsconfig.typecheck.json",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --config vitest.config.ts",
-    "seed": "tsx src/seed/seed.ts"
+    "seed": "tsx src/seed/seed.ts",
+    "migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
     "@foodops/shared": "workspace:*",

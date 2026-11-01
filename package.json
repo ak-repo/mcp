@@ -14,7 +14,8 @@
     "lint": "eslint . --max-warnings 0",
     "test": "pnpm -r test",
     "seed": "pnpm --filter @foodops/core seed",
-    "dev:mcp": "pnpm --filter @foodops/mcp-server dev"
+    "dev:mcp": "pnpm --filter @foodops/mcp-server dev",
+    "migrate": "pnpm --filter @foodops/core migrate"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

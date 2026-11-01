@@ -100,6 +100,11 @@ All money is stored as **integer paise** (INR). Timestamps are ISO-8601 UTC text
 | `refunds` | id, order\_id, payment\_id, amount\_paise, reason, actor, idempotency\_key (unique), created\_at |
 | `invoices` | id, order\_id (unique), invoice\_no, subtotal\_paise, tax\_paise, fees\_paise, discount\_paise, total\_paise, issued\_at |
 | `tool_call_log` | id, session\_id, tool, args\_json, status, error\_code, latency\_ms, actor, at |
+| `idempotency_keys` | key (primary key), operation, request\_hash (SHA-256), response\_json, created\_at |
+
+Idempotency records are written in the same transaction as the operation they protect. A repeated key returns the stored response only when the operation and request hash match; a mismatched reuse is a `CONFLICT`.
+
+Delivery statuses are `pending`, `assigned`, `picked_up`, `out_for_delivery`, `delivered`, and `cancelled`. An unassigned delivery has a nullable partner and assignment timestamp; unfinished pickup and delivery timestamps are nullable. Tool-call log statuses are `success` and `error`.
 
 **Pricing rules**
 
