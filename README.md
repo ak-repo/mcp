@@ -1,6 +1,6 @@
 # FoodOps MCP
 
-Seeded food-order, delivery, refund, and invoice operations exposed through Model Context Protocol. Node.js 22, strict TypeScript, pnpm, SQLite, Zod, and the pinned MCP SDK. The current application is the MCP backend.
+Seeded food-order, delivery, refund, and invoice operations exposed through Model Context Protocol. Node.js 22, strict TypeScript, pnpm, SQLite, Zod, and the pinned MCP SDK. The current applications are the MCP backend and the dashboard API foundation (health probes only).
 
 From the workspace root, with Node 22 and pnpm 10 active:
 
@@ -44,3 +44,18 @@ Process values override the workspace `.env`.
 | `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`. |
 
 Choose stdio or HTTP through its entrypoint. Preview write tools without a token, show the preview to the user, then execute with its five-minute `confirmation_token` after approval. The host enforces human approval. See the server guide for retry behavior and the isolated stdio verification command.
+
+## Dashboard API foundation
+
+Set a separate `ADMIN_TOKEN` in `.env` (32+ characters, no whitespace), then run `pnpm dev:api`, or `pnpm build` followed by `pnpm start:api`. Public probes: `GET /api/health` for liveness and `GET /api/ready` for a core DB read. Other requests require bearer authentication; domain routes are deferred. See the [API guide](apps/api/README.md) for security, error contracts, and lifecycle ownership.
+
+| Variable             | Default                 | Meaning                                                                                                   |
+| -------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------- |
+| `DB_PATH`            | `./data/foodops.sqlite` | Existing initialized SQLite file, relative to workspace root.                                             |
+| `API_HOST`           | `127.0.0.1`             | Listener IP address or hostname; proxy headers are never trusted.                                         |
+| `API_PORT`           | `3002`                  | Integer 1–65535.                                                                                          |
+| `ADMIN_TOKEN`        | required                | At least 32 characters without whitespace; separate from MCP authentication.                              |
+| `WEB_ORIGIN`         | `http://localhost:5173` | Comma-separated exact HTTP(S) origins; no wildcards, trailing slash, paths, or credentials.               |
+| `LOG_LEVEL`          | `info`                  | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                          |
+| `SIMULATOR`          | `off`                   | `off` or `on`; `on` fails startup until the simulator phase is implemented.                               |
+| `RATE_LIMIT_PER_MIN` | `120`                   | Positive safe integer; per-IP, per-process requests per minute. Write hook uses one quarter, minimum one. |

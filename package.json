@@ -9,14 +9,16 @@
     "pnpm": ">=10 <11"
   },
   "scripts": {
-    "build": "tsc -b packages/shared packages/core apps/mcp-server",
+    "build": "tsc -b packages/shared packages/core apps/mcp-server apps/api",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint . --max-warnings 0",
     "test": "pnpm -r test",
     "seed": "pnpm --filter @foodops/core seed",
     "dev:mcp": "pnpm --silent --filter @foodops/mcp-server dev",
     "migrate": "pnpm --filter @foodops/core migrate",
-    "start:http": "pnpm --silent --filter @foodops/mcp-server start:http"
+    "start:http": "pnpm --silent --filter @foodops/mcp-server start:http",
+    "dev:api": "pnpm --filter @foodops/api dev:api",
+    "start:api": "pnpm --filter @foodops/api start:api"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

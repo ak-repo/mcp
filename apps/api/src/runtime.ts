@@ -1,0 +1,84 @@
+import { statSync } from 'node:fs';
+import { createServices, type Services } from '@foodops/core';
+import { openReadOnly, openWritable, type DatabaseConnection } from '@foodops/core/db/connection';
+import { AppError, ErrorCode } from '@foodops/shared';
+import pino, { type Logger, type DestinationStream } from 'pino';
+import type { Config } from './config.js';
+
+export interface Runtime {
+  services: Services;
+  logger: Logger;
+  checkReady(): void;
+  close(): void;
+}
+export function createLogger(
+  level: Config['LOG_LEVEL'] = 'info',
+  destination?: DestinationStream,
+): Logger {
+  return pino(
+    {
+      level,
+      base: { service: 'foodops-api' },
+      redact: {
+        paths: [
+          'ADMIN_TOKEN',
+          'MCP_AUTH_TOKEN',
+          'MCP_CONFIRM_SECRET',
+          'authorization',
+          'headers.authorization',
+          'req.headers.authorization',
+          'config.ADMIN_TOKEN',
+        ],
+        censor: '[REDACTED]',
+      },
+      serializers: {
+        req: (request: { method: string; url: string }) => ({
+          method: request.method,
+          path: request.url.split('?')[0],
+        }),
+      },
+    },
+    destination ?? pino.destination({ dest: 1, sync: true }),
+  );
+}
+export function openRuntime(config: Config): Runtime {
+  let write: DatabaseConnection | undefined;
+  let read: DatabaseConnection | undefined;
+  try {
+    if (!statSync(config.DB_PATH, { throwIfNoEntry: false })?.isFile())
+      throw new AppError(
+        ErrorCode.NOT_FOUND,
+        'Initialized database file was not found',
+        'Run pnpm migrate and pnpm seed before starting the API',
+      );
+    write = openWritable(config.DB_PATH);
+    read = openReadOnly(config.DB_PATH);
+    const services = createServices({ write, read });
+    const checkReady = () => {
+      services.catalog.searchRestaurants({ limit: 1 });
+    };
+    checkReady();
+    let closed = false;
+    return {
+      services,
+      logger: createLogger(config.LOG_LEVEL),
+      checkReady,
+      close() {
+        if (closed) return;
+        closed = true;
+        try {
+          read?.close();
+        } finally {
+          write?.close();
+        }
+      },
+    };
+  } catch (error) {
+    try {
+      read?.close();
+    } finally {
+      write?.close();
+    }
+    throw error;
+  }
+}

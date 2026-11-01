@@ -225,30 +225,48 @@ Tokens use HMAC-SHA256 and expire after five minutes. They bind the tool, normal
 
 ## 8. REST + SSE API (apps/api)
 
-Auth: `Authorization: Bearer <ADMIN_TOKEN>` on everything except `/api/health`. Errors use `{ error: { code, message } }` with the shared codes.
+**Implemented foundation:** only the two probes below exist. Domain routes, SSE, simulator, MCP client, and agent/LLM integration remain planned. API imports core/shared directly; core has no HTTP knowledge and never imports an application.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/health` | Liveness and DB check. |
-| GET | `/api/orders` | Filter by status, date, text; cursor pagination. |
-| GET | `/api/orders/:id` | Order detail with timeline. |
-| POST | `/api/orders/:id/advance` | Advance status. |
-| POST | `/api/orders/:id/cancel` | Cancel with reason. |
-| POST | `/api/orders/:id/refund` | Issue refund. |
-| GET | `/api/orders/:id/invoice` | Invoice JSON (UI renders print layout). |
-| GET | `/api/deliveries` | Active deliveries with partner and ETA. |
-| POST | `/api/deliveries/:orderId/reassign` | Reassign partner. |
-| GET | `/api/restaurants`, `/api/restaurants/:id/menu` | Catalog. |
-| GET | `/api/metrics/summary` | KPI and chart data. |
-| GET | `/api/mcp/tools` | Tool catalog with JSON Schemas (for the inspector view). |
-| GET | `/api/mcp/calls` | Recent tool-call log. |
-| GET | `/api/stream` | SSE: `order.updated`, `delivery.updated`, `mcp.call`, `agent.*`. |
-| POST | `/api/chat` | Send a message; response streams over SSE. |
-| POST | `/api/chat/:runId/approve` | Approve or reject a pending write tool call. |
-| GET/PUT | `/api/providers` | List and set active provider config (secrets never returned). |
-| POST | `/api/providers/test` | Connectivity and capability probe. |
+Auth: `Authorization: Bearer <ADMIN_TOKEN>` on everything except exact `GET /api/health`, `GET /api/ready`, and valid CORS preflights. Tokens require 32+ characters without whitespace; compare SHA-256 digests in constant time and reject duplicate Authorization fields. Errors use `{ error: { code, message, hint } }`; shared codes map to their documented HTTP statuses, with API-only `UNAUTHORIZED` (401) and `FORBIDDEN` (403). Internal failures are sanitized and logged only server-side.
 
-**Simulator** (`SIMULATOR=on`): a timer advances random active orders and creates new ones every few seconds, so the board and charts move during a demo. Simulator writes use the same services and emit the same events.
+Foundation configuration (process environment overrides workspace `.env`):
+
+| Variable             | Default                 | Meaning                                                                                                   |
+| -------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------- |
+| `DB_PATH`            | `./data/foodops.sqlite` | Existing initialized SQLite file, relative to workspace root.                                             |
+| `API_HOST`           | `127.0.0.1`             | Listener IP address or hostname; proxy headers are never trusted.                                         |
+| `API_PORT`           | `3002`                  | Integer 1–65535.                                                                                          |
+| `ADMIN_TOKEN`        | required                | At least 32 characters without whitespace; separate from MCP authentication.                              |
+| `WEB_ORIGIN`         | `http://localhost:5173` | Comma-separated exact HTTP(S) origins; no wildcards, trailing slash, paths, or credentials.               |
+| `LOG_LEVEL`          | `info`                  | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                          |
+| `SIMULATOR`          | `off`                   | `off` or `on`; `on` fails startup until the simulator phase is implemented.                               |
+| `RATE_LIMIT_PER_MIN` | `120`                   | Positive safe integer; per-IP, per-process requests per minute. Write hook uses one quarter, minimum one. |
+
+Helmet headers, exact-origin CORS without credentials, a 100 KB body limit, per-IP global rate limiting, an independent reusable write limiter, and `trustProxy: false` are enabled. Shutdown drains up to ten seconds and closes DB handles after Fastify; timeout exits 1.
+
+| Method  | Path                                            | Purpose                                                          |
+| ------- | ----------------------------------------------- | ---------------------------------------------------------------- |
+| GET     | `/api/health`                                   | Implemented: liveness only, no DB access.                        |
+| GET     | `/api/ready`                                    | Implemented: DB read through core services; safe 503 on failure. |
+| GET     | `/api/orders`                                   | Filter by status, date, text; cursor pagination.                 |
+| GET     | `/api/orders/:id`                               | Order detail with timeline.                                      |
+| POST    | `/api/orders/:id/advance`                       | Advance status.                                                  |
+| POST    | `/api/orders/:id/cancel`                        | Cancel with reason.                                              |
+| POST    | `/api/orders/:id/refund`                        | Issue refund.                                                    |
+| GET     | `/api/orders/:id/invoice`                       | Invoice JSON (UI renders print layout).                          |
+| GET     | `/api/deliveries`                               | Active deliveries with partner and ETA.                          |
+| POST    | `/api/deliveries/:orderId/reassign`             | Reassign partner.                                                |
+| GET     | `/api/restaurants`, `/api/restaurants/:id/menu` | Catalog.                                                         |
+| GET     | `/api/metrics/summary`                          | KPI and chart data.                                              |
+| GET     | `/api/mcp/tools`                                | Tool catalog with JSON Schemas (for the inspector view).         |
+| GET     | `/api/mcp/calls`                                | Recent tool-call log.                                            |
+| GET     | `/api/stream`                                   | SSE: `order.updated`, `delivery.updated`, `mcp.call`, `agent.*`. |
+| POST    | `/api/chat`                                     | Send a message; response streams over SSE.                       |
+| POST    | `/api/chat/:runId/approve`                      | Approve or reject a pending write tool call.                     |
+| GET/PUT | `/api/providers`                                | List and set active provider config (secrets never returned).    |
+| POST    | `/api/providers/test`                           | Connectivity and capability probe.                               |
+
+**Planned simulator:** the foundation parses `SIMULATOR=off|on` but rejects `on` at startup. In the simulator phase, `SIMULATOR=on` will start a timer that advances random active orders and creates new ones every few seconds, so the board and charts move during a demo. Simulator writes use the same services and emit the same events.
 
 ## 9. LLM Provider Layer (Ollama first, adaptable to all)
 
@@ -342,7 +360,7 @@ The host enforces human approval (step 4), then submits the server-issued confir
 
 - Pino JSON logs with request ID and run ID; stdout in API, **stderr only** in the stdio MCP process (stdout is the protocol channel).
 - Per-tool latency and error counts from `tool_call_log`, shown in the Inspector page.
-- `/api/health` checks DB read and MCP connectivity.
+- `/api/health` is liveness only. `/api/ready` checks DB read through core services; MCP connectivity checks are deferred until the API MCP client exists. Safe request IDs are echoed as `X-Request-Id`; request-scoped logs include request and run IDs. Startup/shutdown logs have service context only.
 
 ## 14. Testing Strategy
 
