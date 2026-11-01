@@ -32,16 +32,16 @@ Transport tests start temporary loopback listeners and child processes. They use
 
 Process values override the workspace `.env`.
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `DB_PATH` | `./data/foodops.sqlite` | Initialized SQLite file; relative to workspace root. |
-| `MCP_HOST` | `127.0.0.1` | HTTP bind address; non-loopback access also needs an explicit allowlist. |
-| `PORT` | `3001` | HTTP port, integer 1–65535. |
-| `MCP_PORT` | unset | Legacy port fallback when `PORT` is absent. |
-| `ALLOWED_HOSTS` | loopback at `PORT` | Comma-separated `host:port` authorities for request Host and Origin. Defaults: `127.0.0.1`, `localhost`, `[::1]` with the listener port. No URLs or wildcards. |
-| `MCP_AUTH_TOKEN` | unset | Required for HTTP: at least 32 characters without whitespace. Stdio is trusted locally. |
-| `MCP_CONFIRM_SECRET` | random per process | Optional shared HMAC secret, at least 32 characters without surrounding whitespace; sharing supports multiple processes, rotation invalidates tokens. |
-| `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`. |
+| Variable             | Default                 | Meaning                                                                                                                                                        |
+| -------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DB_PATH`            | `./data/foodops.sqlite` | Initialized SQLite file; relative to workspace root.                                                                                                           |
+| `MCP_HOST`           | `127.0.0.1`             | HTTP bind address; non-loopback access also needs an explicit allowlist.                                                                                       |
+| `PORT`               | `3001`                  | HTTP port, integer 1–65535.                                                                                                                                    |
+| `MCP_PORT`           | unset                   | Legacy port fallback when `PORT` is absent.                                                                                                                    |
+| `ALLOWED_HOSTS`      | loopback at `PORT`      | Comma-separated `host:port` authorities for request Host and Origin. Defaults: `127.0.0.1`, `localhost`, `[::1]` with the listener port. No URLs or wildcards. |
+| `MCP_AUTH_TOKEN`     | unset                   | Required for HTTP: at least 32 characters without whitespace. Stdio is trusted locally.                                                                        |
+| `MCP_CONFIRM_SECRET` | random per process      | Optional shared HMAC secret, at least 32 characters without surrounding whitespace; sharing supports multiple processes, rotation invalidates tokens.          |
+| `LOG_LEVEL`          | `info`                  | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                                                                               |
 
 Choose stdio or HTTP through its entrypoint. Preview write tools without a token, show the preview to the user, then execute with its five-minute `confirmation_token` after approval. The host enforces human approval. See the server guide for retry behavior and the isolated stdio verification command.
 
@@ -59,3 +59,15 @@ Set a separate `ADMIN_TOKEN` in `.env` (32+ characters, no whitespace), then run
 | `LOG_LEVEL`          | `info`                  | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                          |
 | `SIMULATOR`          | `off`                   | `off` or `on`; `on` fails startup until the simulator phase is implemented.                               |
 | `RATE_LIMIT_PER_MIN` | `120`                   | Positive safe integer; per-IP, per-process requests per minute. Write hook uses one quarter, minimum one. |
+
+### Live updates
+
+Use `POST /api/stream/ticket` with bearer auth, then `GET /api/stream?ticket=...` within 30 seconds. Tickets are single-use; reconnect with a fresh ticket and `Last-Event-ID` for retained database changes. Never put the admin token in a URL. See [the API reference](docs/api.md) for event/replay contracts.
+
+| Variable              | Default | Bounds/purpose                |
+| --------------------- | ------- | ----------------------------- |
+| `CHANGE_FEED_POLL_MS` | 500     | 100–60000 ms                  |
+| `SSE_MAX_STREAMS`     | 50      | 1–1000 concurrent streams     |
+| `SSE_REPLAY_LIMIT`    | 1000    | 1–10000 durable replay events |
+
+`SIMULATOR=off` remains required until the simulator phase.

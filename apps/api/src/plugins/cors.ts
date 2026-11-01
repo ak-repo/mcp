@@ -35,6 +35,7 @@ export default fp<{ origins: readonly string[] }>(
                 'x-request-id',
                 'x-run-id',
                 'idempotency-key',
+                'last-event-id',
               ].includes(header.trim().toLowerCase()),
           )
       )
@@ -67,6 +68,7 @@ export default fp<{ origins: readonly string[] }>(
         'X-Request-Id',
         'X-Run-Id',
         'Idempotency-Key',
+        'Last-Event-ID',
       ],
       exposedHeaders: ['X-Request-Id', 'Idempotency-Replayed'],
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

@@ -6,7 +6,11 @@ export default fp<{ token: string }>(
     const expected = createHash('sha256').update(options.token).digest();
     app.addHook('onRequest', async (request, reply) => {
       const path = request.url.split('?')[0];
-      if (request.method === 'GET' && (path === '/api/health' || path === '/api/ready')) return;
+      if (
+        request.method === 'GET' &&
+        (path === '/api/health' || path === '/api/ready' || path === '/api/stream')
+      )
+        return;
       let count = 0;
       for (let i = 0; i < request.raw.rawHeaders.length; i += 2)
         if (request.raw.rawHeaders[i]?.toLowerCase() === 'authorization') count++;

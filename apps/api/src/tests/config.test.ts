@@ -25,6 +25,9 @@ describe('API configuration', () => {
       LOG_LEVEL: 'info',
       SIMULATOR: 'off',
       RATE_LIMIT_PER_MIN: 120,
+      CHANGE_FEED_POLL_MS: 500,
+      SSE_MAX_STREAMS: 50,
+      SSE_REPLAY_LIMIT: 1000,
     });
   });
   it('process values override .env without mutating process environment', () => {
@@ -63,6 +66,11 @@ describe('API configuration', () => {
     ['LOG_LEVEL', 'verbose'],
     ['SIMULATOR', 'true'],
     ['SIMULATOR', 'on'],
+    ['CHANGE_FEED_POLL_MS', '99'],
+    ['CHANGE_FEED_POLL_MS', '60001'],
+    ['SSE_MAX_STREAMS', '0'],
+    ['SSE_MAX_STREAMS', '1001'],
+    ['SSE_REPLAY_LIMIT', '10001'],
     ['RATE_LIMIT_PER_MIN', '0'],
     ['RATE_LIMIT_PER_MIN', '-1'],
     ['RATE_LIMIT_PER_MIN', '1.5'],

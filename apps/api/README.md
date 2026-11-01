@@ -2,7 +2,7 @@
 
 Production foundation for the dashboard HTTP API. This package owns Fastify lifecycle, authentication, HTTP validation, logging, and response mapping. Business rules and database queries belong in `@foodops/core`; DTOs and domain validation belong in `@foodops/shared`. Never import from `apps/mcp-server`.
 
-Domain REST routes and health probes are implemented. See the [complete REST reference](../../docs/api.md) for inputs, responses, examples, and preview/execute approval. SSE, simulator, LLM adapters, and agent execution belong to later phases.
+Domain REST routes and health probes are implemented. See the [complete REST reference](../../docs/api.md) for inputs, responses, examples, and preview/execute approval. Ticket-authenticated SSE is implemented; the simulator is planned. LLM adapters and agent execution belong to later phases.
 
 ## Setup and commands
 
@@ -59,7 +59,7 @@ Errors have `{ error: { code, message, hint } }`. Shared mappings: VALIDATION 40
 
 `buildApp({ config, runtime })` returns an unstarted instance and owns neither signals nor DB lifetime. Embedded callers must close Fastify before closing their runtime. `startApi` owns the listener/runtime lifecycle and supports idempotent `shutdown()`.
 
-SIGINT/SIGTERM stop accepting connections, drain in-flight requests, close Fastify, then close both DB handles. The deadline is ten seconds. On timeout the CLI force-closes sockets and exits 1; it does not close handles while handlers could still resume. Embedded callers must treat a rejected shutdown as fatal or await Fastify closure before reusing or disposing resources.
+SIGINT/SIGTERM stop accepting connections, stop polling and end SSE streams, drain in-flight requests, close Fastify, then close both DB handles. The deadline is ten seconds. On timeout the CLI force-closes sockets and exits 1; it does not close handles while handlers could still resume. Embedded callers must treat a rejected shutdown as fatal or await Fastify closure before reusing or disposing resources.
 
 ## Dependency baseline
 
@@ -68,3 +68,15 @@ Exact versions were selected against the 2026-10-18 publication cutoff (14 days 
 ## REST writes
 
 Read and show the preview to the operator, then execute with `confirm: true` and one `Idempotency-Key` header (8–128 safe characters). The actor is always server-assigned `ops`. REST confirmation is an operator contract; previews are advisory and are not token-bound. MCP retains its separate signed-token protocol. Replays return the original result; `Idempotency-Replayed: true` is set when detectable. See [docs/api.md](../../docs/api.md) for the full contract and cross-process detection limits.
+
+### Live updates
+
+Use `POST /api/stream/ticket` with bearer auth, then `GET /api/stream?ticket=...` within 30 seconds. Tickets are single-use; reconnect with a fresh ticket and `Last-Event-ID` for retained database changes. Never put the admin token in a URL. See [the API reference](../../docs/api.md) for event/replay contracts.
+
+| Variable              | Default | Bounds/purpose                |
+| --------------------- | ------- | ----------------------------- |
+| `CHANGE_FEED_POLL_MS` | 500     | 100–60000 ms                  |
+| `SSE_MAX_STREAMS`     | 50      | 1–1000 concurrent streams     |
+| `SSE_REPLAY_LIMIT`    | 1000    | 1–10000 durable replay events |
+
+`SIMULATOR=off` remains required until the simulator phase.

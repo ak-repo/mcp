@@ -1,3 +1,6 @@
+import { createChangeFeed, type ChangeFeed } from './events/change-feed.js';
+import { createTickets } from './events/tickets.js';
+import { createStreams } from './events/streams.js';
 import { statSync } from 'node:fs';
 import { createServices, type Services } from '@foodops/core';
 import { openReadOnly, openWritable, type DatabaseConnection } from '@foodops/core/db/connection';
@@ -7,6 +10,11 @@ import type { Config } from './config.js';
 
 export interface Runtime {
   services: Services;
+  feed: ChangeFeed;
+  tickets: ReturnType<typeof createTickets>;
+  streams: ReturnType<typeof createStreams>;
+  start(): void;
+  stop(): Promise<void>;
   logger: Logger;
   checkReady(): void;
   close(): void;
@@ -58,14 +66,33 @@ export function openRuntime(config: Config): Runtime {
       services.catalog.searchRestaurants({ limit: 1 });
     };
     checkReady();
+    const logger = createLogger(config.LOG_LEVEL);
+    const feed = createChangeFeed(services, logger, config.CHANGE_FEED_POLL_MS);
+    const tickets = createTickets();
+    const streams = createStreams(config.SSE_MAX_STREAMS);
     let closed = false;
     return {
       services,
-      logger: createLogger(config.LOG_LEVEL),
+      logger,
+      feed,
+      tickets,
+      streams,
+      start() {
+        feed.start();
+        tickets.start();
+      },
+      async stop() {
+        streams.close();
+        tickets.stop();
+        await feed.stop();
+      },
       checkReady,
       close() {
         if (closed) return;
         closed = true;
+        streams.close();
+        tickets.stop();
+        void feed.stop();
         try {
           read?.close();
         } finally {

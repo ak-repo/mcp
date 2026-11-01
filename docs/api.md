@@ -5,11 +5,11 @@ Run `pnpm install`, initialize the database with `pnpm migrate` and `pnpm seed`,
 
 ## Authentication and transport
 
-Send exactly one `Authorization: Bearer <ADMIN_TOKEN>` header. The configured token must contain at least 32 characters without whitespace. Every domain route requires auth; only exact `GET /api/health`, `GET /api/ready`, and valid CORS preflights are public. Duplicate Authorization headers return 401. Probe exceptions apply only to GET.
+Send exactly one `Authorization: Bearer <ADMIN_TOKEN>` header. The configured token must contain at least 32 characters without whitespace. Every domain route requires auth; only exact `GET /api/health`, `GET /api/ready`, and valid CORS preflights are public. Duplicate Authorization headers return 401. Probe exceptions apply only to GET. Exact `GET /api/stream` instead requires a single-use ticket, as described below.
 
-JSON bodies use `Content-Type: application/json` and must not exceed 102400 bytes. Responses are JSON, except successful preflights (204) and HEAD responses (no body). Safe `X-Request-Id` values are echoed; otherwise the server generates a UUID. CORS allows exact configured `WEB_ORIGIN` values with credentials disabled. `Idempotency-Key` is allowed in preflights and `Idempotency-Replayed` is exposed to browser clients. Proxy headers are not trusted.
+JSON bodies use `Content-Type: application/json` and must not exceed 102400 bytes. Responses are JSON, except SSE streams, successful preflights (204) and HEAD responses (no body). Safe `X-Request-Id` values are echoed; otherwise the server generates a UUID. CORS allows exact configured `WEB_ORIGIN` values with credentials disabled. `Idempotency-Key` is allowed in preflights and `Idempotency-Replayed` is exposed to browser clients. Proxy headers are not trusted.
 
-Global limits apply to all requests. All eight POST endpoints also consume the separate stricter write bucket (one quarter of `RATE_LIMIT_PER_MIN`, minimum one, per IP per minute). Limits are per process; exceeding one returns 429 and `Retry-After`.
+Global limits apply to all requests. All POST endpoints also consume the separate stricter write bucket (one quarter of `RATE_LIMIT_PER_MIN`, minimum one, per IP per minute). Limits are per process; exceeding one returns 429 and `Retry-After`.
 
 ## Endpoint reference
 
@@ -38,7 +38,7 @@ All domain successes, including writes and replays, use HTTP 200. Paths are case
 | POST    | `/api/deliveries/:orderId/reassign`         | `{ reason, partner_id, confirm: true }`                                               | `ReassignResult`          | `delivery.executeReassign`      | 200     |
 | OPTIONS | `*`                                         | Valid Origin + Access-Control-Request-Method; optional Access-Control-Request-Headers | Empty preflight response  | CORS plugin                     | 204     |
 
-`GET /api/ready` returns 503 when its core read fails. MCP connectivity checks, the MCP tool catalog, SSE, chat, providers, and simulator remain deferred.
+`GET /api/ready` returns 503 when its core read fails. MCP connectivity checks, the MCP tool catalog, chat and providers remain deferred. SSE endpoints are documented below; simulator remains deferred.
 
 ### Query filters
 
@@ -141,3 +141,30 @@ Example page: `{ "data": [], "next_cursor": null }`. Example error:
 | 503  | INTERNAL              | Readiness failure or server shutdown                                                                |
 
 All errors have `{ error: { code, message, hint } }`. Malformed confirmation types are 400. Missing key validation precedes missing confirmation; no failed validation writes an idempotency record. Use the response `X-Request-Id` when reporting failures.
+
+## Live stream
+
+| Method | Path                 | Purpose                                                                           |
+| ------ | -------------------- | --------------------------------------------------------------------------------- |
+| POST   | `/api/stream/ticket` | Bearer-authenticated, body omitted or `{}`; returns `{ticket, expires_at}` (200). |
+| GET    | `/api/stream`        | Ticket-authenticated SSE; query `ticket`; optional `Last-Event-ID` header.        |
+
+Obtain a fresh ticket with bearer authentication, then connect within 30 seconds. Tickets are random, single-use, in-memory credentials; they do not survive restart. Never put `ADMIN_TOKEN` in a URL. Every reconnect needs a new ticket. Use `fetch` streaming to supply the last durable ID explicitly rather than letting EventSource retry a consumed ticket URL. CORS allows `Last-Event-ID`, with credentials disabled.
+
+```js
+const issued = await fetch('/api/stream/ticket', {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${adminToken}` },
+}).then((r) => r.json());
+const stream = await fetch(`/api/stream?ticket=${encodeURIComponent(issued.ticket)}`, {
+  headers: lastEventId ? { 'Last-Event-ID': String(lastEventId) } : {},
+});
+// Parse event-stream frames from stream.body; retain IDs from durable events.
+```
+
+Successful streams return `text/event-stream`. Frames contain `event`, JSON `data`, and (for database changes) numeric `id` fields, separated by a blank line. Heartbeat comments arrive every 15 seconds. Events are invalidations: refetch authoritative REST data, and treat all text as data.
+
+- `order.updated`, `delivery.updated`, `partner.updated`, `payment.updated`, `invoice.updated`: data `{id, type, order_id, entity, at}`. Refund changes emit `payment.updated` with `entity: "refund"`. An unassigned partner has `order_id: null`; assigned partners emit a row for each active associated order.
+- `mcp.call`: data `{tool, status, error_code, latency_ms, at}`, without args or SSE ID. Audit notifications are live-only; REST `/api/mcp/calls` supplies history.
+
+The feed polls every 500 ms by default and sees writes from API, MCP and other SQLite processes. At boot it starts at current maxima. A connection without `Last-Event-ID` receives future changes; one with the header replays retained rows then transitions to live without duplicate durable IDs. Change history is retained for 24 hours and pruned hourly. Invalid cursors produce 400; missing/expired/used tickets produce 401. Unavailable history, future IDs, or replay beyond `SSE_REPLAY_LIMIT` produce 409 `CONFLICT` before streaming: refresh REST state, request a new ticket, and reconnect without the header. Ticket and stream capacity limits produce 429 `LIMIT_EXCEEDED`. The default concurrent-stream limit is 50. Slow consumers are disconnected when their bounded queue fills; reconnect using the last received durable ID. Shutdown ends streams before database handles close.

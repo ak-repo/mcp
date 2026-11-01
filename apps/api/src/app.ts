@@ -51,6 +51,12 @@ export function buildApp(deps: { config: Config; runtime: Runtime }): FastifyIns
   app.register(rateLimit, { max: config.RATE_LIMIT_PER_MIN });
   app.register(cors, { origins: config.WEB_ORIGIN });
   app.register(auth, { token: config.ADMIN_TOKEN });
-  app.register(routes, { prefix: '/api', runtime });
+  app.addHook('onReady', async () => {
+    runtime.start();
+  });
+  app.addHook('preClose', async () => {
+    await runtime.stop();
+  });
+  app.register(routes, { replayLimit: config.SSE_REPLAY_LIMIT, prefix: '/api', runtime });
   return app;
 }

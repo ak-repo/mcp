@@ -64,6 +64,9 @@ export const ConfigSchema = z.object({
   WEB_ORIGIN: origins.prefault('http://localhost:5173'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   SIMULATOR: z.enum(['off', 'on']).default('off'),
+  CHANGE_FEED_POLL_MS: positiveInteger.pipe(z.number().min(100).max(60000)).default(500),
+  SSE_MAX_STREAMS: positiveInteger.pipe(z.number().max(1000)).default(50),
+  SSE_REPLAY_LIMIT: positiveInteger.pipe(z.number().max(10000)).default(1000),
   RATE_LIMIT_PER_MIN: positiveInteger.default(120),
 });
 export type Config = z.infer<typeof ConfigSchema>;
@@ -96,8 +99,8 @@ export function loadConfig(options: { root?: string; env?: NodeJS.ProcessEnv } =
   if (parsed.data.SIMULATOR === 'on')
     throw new AppError(
       ErrorCode.VALIDATION,
-      'SIMULATOR=on is not supported by the API foundation',
-      'Set SIMULATOR=off until the simulator phase is implemented',
+      'SIMULATOR=on is not supported until the simulator phase',
+      'Set SIMULATOR=off',
     );
   return { ...parsed.data, DB_PATH: resolve(root, parsed.data.DB_PATH) };
 }
