@@ -41,7 +41,7 @@ pnpm start:http
 
 Build before running compiled entrypoints or starting a host. `dev:mcp` runs without watch restarts. Importing the package does not start a process or open a database.
 
-HTTP binds to `127.0.0.1`. Each authenticated `POST /mcp` creates and closes a new MCP server/transport, sharing process-owned DB handles. Responses are JSON; no session ID is issued. `GET`/`DELETE /mcp` return `405` when authenticated. Hosts/Origins must be loopback; browser integrations can use Inspector's backend proxy.
+HTTP binds to `MCP_HOST` (default `127.0.0.1`). Each authenticated `POST /mcp` creates and closes a new MCP server/transport, sharing process-owned DB handles. Responses are JSON; no session ID is issued. `GET`/`DELETE /mcp` return `405` when authenticated. Host and optional Origin authorities must appear in `ALLOWED_HOSTS`; the default allows loopback at the listener port. For a remote bind such as `MCP_HOST=0.0.0.0`, explicitly list the public hostname and port; a bind address does not grant access. Browser integrations can use Inspector’s backend proxy. This validation does not add browser CORS support.
 
 `GET /healthz` requires no token and reads the DB through core services. It returns `200 {"status":"ok"}` or a sanitized `503`. Missing/incorrect bearer credentials return `401`. POST bodies are limited to 1 MiB, including chunked uploads; oversized bodies return `413`, invalid JSON `400`, and slow bodies `408`. The SDK checks MCP protocol headers and messages. A raw POST needs `Content-Type: application/json` and `Accept: application/json, text/event-stream`.
 
@@ -51,15 +51,18 @@ SIGINT/SIGTERM stop new work and drain requests/output before closing DB handles
 
 Process values override the workspace `.env`.
 
-| Variable         | Default                 | Meaning                                                                           |
-| ---------------- | ----------------------- | --------------------------------------------------------------------------------- |
-| `DB_PATH`        | `./data/foodops.sqlite` | Existing initialized SQLite file; relative to workspace root.                     |
-| `MCP_AUTH_TOKEN` | unset                   | Required for HTTP; a nonempty token without whitespace. Stdio is trusted locally. |
-| `PORT`           | `3001`                  | HTTP port, integer 1–65535.                                                       |
-| `MCP_PORT`       | unset                   | Legacy port fallback when `PORT` is absent.                                       |
-| `LOG_LEVEL`      | `info`                  | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                  |
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DB_PATH` | `./data/foodops.sqlite` | Initialized SQLite file; relative to workspace root. |
+| `MCP_HOST` | `127.0.0.1` | HTTP bind address; non-loopback access also needs an explicit allowlist. |
+| `PORT` | `3001` | HTTP port, integer 1–65535. |
+| `MCP_PORT` | unset | Legacy port fallback when `PORT` is absent. |
+| `ALLOWED_HOSTS` | loopback at `PORT` | Comma-separated `host:port` authorities for request Host and Origin. Defaults: `127.0.0.1`, `localhost`, `[::1]` with the listener port. No URLs or wildcards. |
+| `MCP_AUTH_TOKEN` | unset | Required for HTTP: at least 32 characters without whitespace. Stdio is trusted locally. |
+| `MCP_CONFIRM_SECRET` | random per process | Optional shared HMAC secret, at least 32 characters without surrounding whitespace; sharing supports multiple processes, rotation invalidates tokens. |
+| `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`. |
 
-Select the transport with its entrypoint. The scaffold's `MCP_TRANSPORT`/`MCP_HOST` fields are not read; HTTP binds to loopback. The seed CLI's `DATABASE_PATH` compatibility alias and the migration CLI's override are separate from server configuration.
+Select the transport with its entrypoint; `MCP_TRANSPORT` is removed. Process values override `.env`, including legacy port precedence. The seed CLI's `DATABASE_PATH` compatibility alias and the migration CLI's override are separate from server configuration.
 
 Each request gets a generated `request_id`. HTTP accepts a bounded `X-Run-Id` and returns `X-Request-Id`/`X-Run-Id`; stdio accepts `_meta.run_id`, falling back to a process run ID. Transport and tool logs share that context. Logs omit credentials and full arguments; `tool_call_log` stores tool arguments, status, error code, actor, and latency.
 
@@ -167,3 +170,16 @@ pnpm lint
 ```
 
 Build precedes process tests, which execute the compiled entrypoints. Tests use temporary seeded SQLite files, actual child processes and loopback HTTP listeners, SDK clients, contract snapshots, and a preview/confirm/replay flow that inspects events and audit rows. They also test body limits, auth, concurrent reused RPC IDs, backpressure, clean signals/EOF, forced drain cleanup, and credential-free correlated logs.
+
+
+## Review verification
+
+After building, run the isolated stdio verification client:
+
+```sh
+node apps/mcp-server/dist/transports/confirmation-e2e.js
+```
+
+It seeds a temporary DB, cancels an assigned order through preview/token execution, prints partner status before/after, checks replay, and rejects missing, tampered, expired, and stale-state tokens. The expiry fixture uses a test-only shared secret to sign a past expiry; production has no TTL or clock override. The client prints diagnostics; its server child keeps stdout JSON-RPC only. Your workspace DB is untouched.
+
+Existing databases require `pnpm migrate` before startup to apply `0002_integrity.sql`. Use the documented `DATABASE_PATH` override for a custom path. The migration preserves content, rejects duplicate deliveries/payments per order, and makes invoice UPDATE/DELETE fail. Reconcile duplicate legacy data before retrying a failed migration; do not edit applied migration files or reset a database containing changes you need to preserve.

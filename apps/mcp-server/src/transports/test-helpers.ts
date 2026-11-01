@@ -6,7 +6,7 @@ import { seedDatabase } from '@foodops/core/seed/seed';
 import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
 import { type Config } from '../lib/config.js';
 
-export const TOKEN = 'foodops-integration-secret';
+export const TOKEN = 'foodops-integration-secret-32-characters';
 export const HEADERS = {
   Authorization: `Bearer ${TOKEN}`,
   'Content-Type': 'application/json',
@@ -34,7 +34,13 @@ export function seedFixture(): { directory: string; config: Config; close(): voi
   }
   return {
     directory,
-    config: { DB_PATH: path, LOG_LEVEL: 'silent', PORT: 3001, MCP_AUTH_TOKEN: TOKEN },
+    config: {
+      MCP_HOST: '127.0.0.1',
+      DB_PATH: path,
+      LOG_LEVEL: 'silent',
+      PORT: 3001,
+      MCP_AUTH_TOKEN: TOKEN,
+    },
     close: () => rmSync(directory, { recursive: true, force: true }),
   };
 }

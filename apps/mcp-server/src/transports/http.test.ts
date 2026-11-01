@@ -320,3 +320,71 @@ it('forces overdue connections closed and closes the database on drain timeout',
   release(result);
   expect(() => runtime.checkHealth()).toThrow();
 });
+it.each([undefined, 'x'.repeat(31), 'x'.repeat(31) + ' '])(
+  'rejects weak HTTP credentials before opening runtime resources',
+  async (token) => {
+    const config = { ...fixture.config, DB_PATH: '/missing/database.sqlite' };
+    if (token === undefined) delete config.MCP_AUTH_TOKEN;
+    else config.MCP_AUTH_TOKEN = token;
+    await expect(startHttp({ config, signals: false })).rejects.toThrow(/32 characters/);
+  },
+);
+it('accepts an exactly 32-character token', async () => {
+  await app.shutdown();
+  const token = 'x'.repeat(32);
+  app = await startHttp({
+    config: { ...fixture.config, MCP_AUTH_TOKEN: token },
+    port: 0,
+    signals: false,
+  });
+  const result = await fetch(`${app.url}/mcp`, {
+    method: 'POST',
+    headers: { ...HEADERS, Authorization: `Bearer ${token}` },
+    body: JSON.stringify(INITIALIZE),
+  });
+  expect(result.status).toBe(200);
+  await result.text();
+});
+it('binds a non-loopback interface and enforces an explicit Host and Origin allowlist', async () => {
+  await app.shutdown();
+  const config = {
+    ...fixture.config,
+    MCP_HOST: '0.0.0.0',
+    ALLOWED_HOSTS: ['foodops.example:3001', 'inspector.example:6274'],
+  };
+  app = await startHttp({ config, port: 0, signals: false });
+  expect(app.server.address()).toMatchObject({ address: '0.0.0.0' });
+  async function status(host: string, origin?: string) {
+    return new Promise<number>((resolve, reject) => {
+      const req = nodeRequest(
+        `${app.url}/mcp`,
+        {
+          method: 'POST',
+          headers: { ...HEADERS, Host: host, ...(origin === undefined ? {} : { Origin: origin }) },
+        },
+        (response) => {
+          response.resume();
+          response.on('end', () => resolve(response.statusCode!));
+        },
+      );
+      req.on('error', reject);
+      req.end(JSON.stringify(INITIALIZE));
+    });
+  }
+  expect(await status('foodops.example:3001')).toBe(200);
+  expect(await status('FOODOPS.EXAMPLE:3001', 'http://inspector.example:6274')).toBe(200);
+  expect(await status('foodops.example:3001', 'http://inspector.example:9999')).toBe(403);
+  expect(await status('evil.example:3001')).toBe(403);
+  expect(await status('foodops.example:3001', 'null')).toBe(403);
+  expect(await status('foodops.example:3001', 'http://inspector.example:6274/path')).toBe(403);
+});
+it('default Origin allowlist uses the actual listener port', async () => {
+  const accepted = await fetch(`${app.url}/healthz`, { headers: { Origin: app.url } });
+  expect(accepted.status).toBe(200);
+  await accepted.text();
+  const rejected = await fetch(`${app.url}/healthz`, {
+    headers: { Origin: 'http://localhost:9999' },
+  });
+  expect(rejected.status).toBe(403);
+  await rejected.text();
+});

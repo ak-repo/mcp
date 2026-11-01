@@ -110,6 +110,7 @@ Delivery statuses are `pending`, `assigned`, `picked_up`, `out_for_delivery`, `d
 
 - `total = subtotal + tax (5% of subtotal) + delivery_fee + platform_fee − discount`
 - Order items snapshot name and price at order time; menu edits never alter past orders.
+- Database integrity is enforced by migration `0002_integrity.sql`: one delivery and payment per order, invoice UPDATE/DELETE rejection triggers, and lookup indexes. Applied migrations are never edited; legacy duplicates cause atomic migration failure and require operator reconciliation.
 - Invoice is generated when an order reaches `delivered`, numbered `INV-YYYYMMDD-####`, and is **immutable** afterwards. Refunds are separate records, never invoice edits.
 
 **Seed (deterministic, fixed RNG seed)**
@@ -136,7 +137,7 @@ All rules live in `packages/core`. Neither MCP nor REST may bypass them.
 
 **Rules**
 
-- Cancellation allowed only before `picked_up`. If the payment was `paid`, a remaining captured balance is refunded in the same transaction. A nonterminal delivery is cancelled, and its busy partner becomes available only if no other active delivery uses that partner.
+- Cancellation allowed only before `picked_up`. If the payment was captured, its remaining balance is refunded in the same transaction. A nonterminal delivery is cancelled, and its busy partner becomes available only if no other active delivery uses that partner.
 - Refund: amount must be > 0 and ≤ (paid − already refunded). Refunds above **₹2,000** require explicit approval through a human-approved path; MCP execution uses the signed preview token described in section 7.2. Order must be `delivered` or `cancelled` unless it is a cancellation refund.
 - Reassign delivery: only before `picked_up`; target partner must be `available`; previous partner returns to `available`.
 - Every status change writes an `order_events` row with actor and reason.
@@ -149,12 +150,27 @@ All rules live in `packages/core`. Neither MCP nor REST may bypass them.
 
 ### 7.1 Transports and lifecycle
 
-- **stdio**: for Claude Desktop and Inspector (`node dist/stdio.js`).
+- **stdio**: for Claude Desktop and Inspector (`node apps/mcp-server/dist/transports/stdio.js` from the workspace root).
 - **Streamable HTTP** at `POST /mcp`: used by `apps/api`. Run **stateless** (new transport per request). The MVP needs no server-initiated messages, so sessions add risk without benefit.
 - Protocol version negotiated by the SDK; SDK version pinned in `package.json`.
 - Graceful shutdown on SIGTERM: stop accepting requests, finish in-flight calls, close DB.
-- Bearer token required on HTTP (`MCP_AUTH_TOKEN`). stdio is trusted (local process).
+- Bearer token of at least 32 characters without whitespace required on HTTP (`MCP_AUTH_TOKEN`). stdio is trusted (local process). HTTP binds to `MCP_HOST`; request Host and optional Origin must match `ALLOWED_HOSTS`.
 - Read calls have a 5 s deadline; writes already started are awaited and return their real result even after that deadline. Result size is capped (see 7.5).
+
+**MCP environment** (process values override workspace `.env`):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DB_PATH` | `./data/foodops.sqlite` | Initialized SQLite file; relative to workspace root. |
+| `MCP_HOST` | `127.0.0.1` | HTTP bind address; non-loopback access also needs an explicit allowlist. |
+| `PORT` | `3001` | HTTP port, integer 1–65535. |
+| `MCP_PORT` | unset | Legacy port fallback when `PORT` is absent. |
+| `ALLOWED_HOSTS` | loopback at `PORT` | Comma-separated `host:port` authorities for request Host and Origin. Defaults: `127.0.0.1`, `localhost`, `[::1]` with the listener port. No URLs or wildcards. |
+| `MCP_AUTH_TOKEN` | unset | Required for HTTP: at least 32 characters without whitespace. Stdio is trusted locally. |
+| `MCP_CONFIRM_SECRET` | random per process | Optional shared HMAC secret, at least 32 characters without surrounding whitespace; sharing supports multiple processes, rotation invalidates tokens. |
+| `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`. |
+
+Select transport by entrypoint; `MCP_TRANSPORT` is not used. The migration CLI uses `DATABASE_PATH` for a custom absolute path; the seed and MCP server use `DB_PATH`.
 
 ### 7.2 Tools
 

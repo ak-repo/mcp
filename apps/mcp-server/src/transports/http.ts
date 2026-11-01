@@ -11,7 +11,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { AppError, ErrorCode } from '@foodops/shared';
 import { createServer } from '../lib/create-server.js';
 import { withLogContext } from '../lib/logger.js';
-import type { Config } from '../lib/config.js';
+import { normalizeAuthority, defaultAllowedHosts, type Config } from '../lib/config.js';
 import {
   correlation,
   drain,
@@ -64,22 +64,23 @@ export function bearerValidator(token: string): (request: IncomingMessage) => bo
     return equal && count === 1 && match !== null;
   };
 }
-function safeOrigin(request: IncomingMessage, port: number): boolean {
-  if (![`127.0.0.1:${port}`, `localhost:${port}`].includes(request.headers.host ?? ''))
-    return false;
+function safeOrigin(request: IncomingMessage, allowed: ReadonlySet<string>): boolean {
+  const host = normalizeAuthority(request.headers.host ?? '');
+  if (host === null || !allowed.has(host)) return false;
   const origin = request.headers.origin;
   if (origin === undefined) return true;
   try {
     const parsed = new URL(origin);
-    return (
-      ['http:', 'https:'].includes(parsed.protocol) &&
-      ['127.0.0.1', 'localhost'].includes(parsed.hostname) &&
-      parsed.origin === origin
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== origin) return false;
+    const authority = normalizeAuthority(
+      `${parsed.hostname}:${parsed.port || (parsed.protocol === 'https:' ? 443 : 80)}`,
     );
+    return authority !== null && allowed.has(authority);
   } catch {
     return false;
   }
 }
+
 function readBody(request: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -158,11 +159,11 @@ export interface HttpApplication {
 }
 export async function startHttp(options: HttpOptions): Promise<HttpApplication> {
   const token = options.config.MCP_AUTH_TOKEN;
-  if (!token || /\s/.test(token))
+  if (!token || token.length < 32 || /\s/.test(token))
     throw new AppError(
       ErrorCode.VALIDATION,
-      'MCP_AUTH_TOKEN is required for HTTP',
-      'Set a nonempty bearer token without whitespace before starting HTTP',
+      'MCP_AUTH_TOKEN must contain at least 32 characters for HTTP',
+      'Set a bearer token of at least 32 characters without whitespace before starting HTTP',
     );
   const authorize = bearerValidator(token);
   const runtime = options.runtime ?? openRuntime(options.config);
@@ -186,7 +187,14 @@ export async function startHttp(options: HttpOptions): Promise<HttpApplication> 
           return;
         }
         const address = server.address();
-        if (!address || typeof address === 'string' || !safeOrigin(request, address.port)) {
+        if (
+          !address ||
+          typeof address === 'string' ||
+          !safeOrigin(
+            request,
+            new Set(options.config.ALLOWED_HOSTS ?? defaultAllowedHosts(address.port)),
+          )
+        ) {
           protocolError(response, 403, 'Host or Origin is not allowed');
           return;
         }
@@ -290,12 +298,18 @@ export async function startHttp(options: HttpOptions): Promise<HttpApplication> 
     return closing;
   };
   try {
-    server.listen(options.port ?? options.config.PORT, '127.0.0.1');
+    server.listen(options.port ?? options.config.PORT, options.config.MCP_HOST);
     await once(server, 'listening');
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('HTTP listener has no address');
     if (options.signals !== false) uninstall = installSignals(shutdown, runtime.logger);
-    const url = `http://127.0.0.1:${address.port}`;
+    const host =
+      options.config.MCP_HOST === '0.0.0.0'
+        ? '127.0.0.1'
+        : options.config.MCP_HOST === '::'
+          ? '::1'
+          : options.config.MCP_HOST;
+    const url = `http://${host.includes(':') ? `[${host}]` : host}:${address.port}`;
     runtime.logger.info({ url }, 'HTTP MCP server ready');
     return { server, runtime, url, shutdown };
   } catch (error) {

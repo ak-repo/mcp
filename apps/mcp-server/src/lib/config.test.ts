@@ -17,6 +17,7 @@ it('loads defaults relative to the workspace rather than the current directory',
   expect(loadConfig({ root, env: {} })).toEqual({
     DB_PATH: join(root, 'data/foodops.sqlite'),
     PORT: 3001,
+    MCP_HOST: '127.0.0.1',
     LOG_LEVEL: 'info',
   });
 });
@@ -45,6 +46,7 @@ it('loads quoted .env values with process precedence and supports MCP_PORT fallb
   ).toEqual({
     DB_PATH: '/tmp/override.sqlite',
     PORT: 5000,
+    MCP_HOST: '127.0.0.1',
     MCP_AUTH_TOKEN: 'env-token',
     LOG_LEVEL: 'warn',
   });
@@ -60,6 +62,15 @@ it.each([
   { DB_PATH: ':memory:' },
   { LOG_LEVEL: 'verbose' },
   { MCP_AUTH_TOKEN: ' ' },
+  { MCP_CONFIRM_SECRET: 'short' },
+  { MCP_HOST: 'http://example.com' },
+  { ALLOWED_HOSTS: '*.example.com:3001' },
+  { ALLOWED_HOSTS: 'example.com' },
+  { ALLOWED_HOSTS: 'example.com:0' },
+  { ALLOWED_HOSTS: 'example.com:65536' },
+  { ALLOWED_HOSTS: 'user@example.com:3001' },
+  { ALLOWED_HOSTS: 'example.com:3001/path' },
+  { ALLOWED_HOSTS: 'example.com:3001,' },
 ])('rejects invalid configuration without leaking values: %j', (env) => {
   expect(() => loadConfig({ root, env })).toThrow(AppError);
   expect(() => loadConfig({ root, env })).toThrow('Invalid MCP configuration');
@@ -82,16 +93,33 @@ it('writes Pino JSON exclusively to stderr and redacts tokens in the built packa
     [
       '--input-type=module',
       '-e',
-      "import { createLogger } from './dist/lib/logger.js'; createLogger().info({ MCP_AUTH_TOKEN: 'SECRET', headers: { authorization: 'SECRET' } }, 'test');",
+      "import { createLogger } from './dist/lib/logger.js'; createLogger().info({ MCP_AUTH_TOKEN: 'sensitive-test-value-123', MCP_CONFIRM_SECRET: 'sensitive-test-value-123', confirmation_token: 'sensitive-test-value-123', headers: { authorization: 'sensitive-test-value-123' } }, 'test');",
     ],
     { cwd: fileURLToPath(new URL('../..', import.meta.url)), encoding: 'utf8' },
   );
   expect(result.status).toBe(0);
   expect(result.stdout).toBe('');
-  expect(result.stderr).not.toContain('SECRET');
+  expect(result.stderr).not.toContain('sensitive-test-value-123');
   expect(JSON.parse(result.stderr)).toMatchObject({
     msg: 'test',
     MCP_AUTH_TOKEN: '[REDACTED]',
     headers: { authorization: '[REDACTED]' },
   });
+});
+
+it('reads bind and authority settings with environment precedence and IPv6 support', () => {
+  writeFileSync(
+    join(root, '.env'),
+    'MCP_HOST=localhost\nALLOWED_HOSTS=localhost:4000\nMCP_CONFIRM_SECRET=shared-secret-with-at-least-32-characters\n',
+  );
+  const file = loadConfig({ root, env: {} });
+  expect(file.MCP_HOST).toBe('localhost');
+  expect(file.ALLOWED_HOSTS).toEqual(['localhost:4000']);
+  expect(file.MCP_CONFIRM_SECRET).toEqual(expect.any(String));
+  expect(
+    loadConfig({
+      root,
+      env: { MCP_HOST: '0.0.0.0', ALLOWED_HOSTS: 'Example.COM:3001, [::1]:3001,example.com:3001' },
+    }),
+  ).toMatchObject({ MCP_HOST: '0.0.0.0', ALLOWED_HOSTS: ['example.com:3001', '[::1]:3001'] });
 });
