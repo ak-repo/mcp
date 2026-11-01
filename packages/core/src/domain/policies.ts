@@ -20,6 +20,7 @@ function validMoney(value: number): number {
   }
 }
 
+export const DEFAULT_DELIVERY_ETA_MIN = 30;
 export const LARGE_REFUND_PAISE = 200000;
 export const CANCELLATION_ALLOWED_STATUSES: readonly OrderStatus[] = Object.freeze([
   'placed',

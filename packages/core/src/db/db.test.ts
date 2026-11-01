@@ -234,7 +234,9 @@ describe('numbered migrations', () => {
       )
       .all()
       .map((row) => row.name);
-    expect(tables).toEqual([...Object.keys(rows), 'schema_migrations'].sort());
+    expect(tables).toEqual(
+      [...Object.keys(rows), 'schema_migrations', 'change_log', 'sqlite_sequence'].sort(),
+    );
     const indexes = db
       .prepare<[], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'index'")
       .all()
@@ -460,4 +462,65 @@ describe('integrity migration', () => {
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger'").all()).toEqual([]);
     },
   );
+});
+
+describe('change-log upgrade', () => {
+  it('adds triggers to an existing seeded v2 database without backfilling, protects checksums', () => {
+    const path = migrationDirectory();
+    copyFileSync(
+      join(DEFAULT_MIGRATIONS_DIRECTORY, '0002_integrity.sql'),
+      join(path, '0002_integrity.sql'),
+    );
+    migrate(db, path);
+    db.transaction(() => insertSeedData(db, createSeedData()))();
+    const hash = checkSeedInvariants(db).contentHash;
+    copyFileSync(
+      join(DEFAULT_MIGRATIONS_DIRECTORY, '0003_change_log.sql'),
+      join(path, '0003_change_log.sql'),
+    );
+    expect(migrate(db, path)).toEqual(['0003_change_log.sql']);
+    expect(checkSeedInvariants(db).contentHash).toBe(hash);
+    expect(db.prepare('SELECT count(*) AS n FROM change_log').get()).toEqual({ n: 0 });
+    db.prepare(
+      'UPDATE payments SET status=status WHERE id=(SELECT id FROM payments LIMIT 1)',
+    ).run();
+    expect(db.prepare('SELECT entity,op FROM change_log').all()).toEqual([
+      { entity: 'payment', op: 'update' },
+    ]);
+    writeFileSync(
+      join(path, '0003_change_log.sql'),
+      readFileSync(join(path, '0003_change_log.sql'), 'utf8') + '\n-- tampered',
+    );
+    expect(() => migrate(db, path)).toThrow(/changed/);
+  });
+});
+
+it('preserves operational invariants after placing and cancelling a live order on a seed', async () => {
+  const { seedDatabase } = await import('../seed/seed.js');
+  const { createServices } = await import('../services/index.js');
+  seedDatabase(db);
+  const read = openReadOnly(databasePath);
+  extraConnections.push(read);
+  const services = createServices({ write: db, read });
+  const restaurant = services.catalog.searchRestaurants({ openNow: true }).items[0]!;
+  const address = services.catalog.placementCustomers()[0]!;
+  const item = services.catalog.getMenu({ restaurantId: restaurant.id, availableOnly: true })
+    .items[0]!;
+  const result = services.order.placeOrder({
+    customerId: address.customer_id,
+    addressId: address.id,
+    restaurantId: restaurant.id,
+    items: [{ menuItemId: item.id, qty: 2 }],
+    paymentMethod: 'upi',
+    actor: 'system',
+    reason: 'Live invariant test',
+  });
+  services.order.executeCancel({
+    orderId: result.order.id,
+    actor: 'system',
+    reason: 'Live cancellation',
+  });
+  expect(() =>
+    checkSeedInvariants(db, { operational: true, now: '2026-11-03T00:00:00.000Z' }),
+  ).not.toThrow();
 });

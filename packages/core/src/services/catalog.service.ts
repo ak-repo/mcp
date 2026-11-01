@@ -3,6 +3,9 @@ import { id, keys, parse, required, type ServiceContext } from './context.js';
 import type { MenuInput, RestaurantSearchInput } from './types.js';
 export function createCatalogService(context: ServiceContext) {
   return {
+    placementCustomers() {
+      return context.read((repos) => repos.catalog.placementCustomers());
+    },
     searchRestaurants(input: RestaurantSearchInput = {}) {
       keys(input, ['query', 'cuisine', 'area', 'openNow', 'cursor', 'limit']);
       const filters = parse(

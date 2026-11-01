@@ -32,12 +32,17 @@ function timestamp(value: string): number {
 }
 
 /** Validate persisted data, independently of the factory's construction path. */
-export function checkSeedInvariants(db: DatabaseConnection): InvariantReport {
+export function checkSeedInvariants(
+  db: DatabaseConnection,
+  options: { operational?: boolean; now?: string } = {},
+): InvariantReport {
   try {
     const foreignKeys: unknown = db.pragma('foreign_key_check');
     check(Array.isArray(foreignKeys) && foreignKeys.length === 0, 'all foreign keys must resolve');
     const data = readSeedData(db);
-    const anchor = timestamp(SEED_NOW);
+    const anchor = timestamp(
+      options.now ?? (options.operational ? new Date().toISOString() : SEED_NOW),
+    );
     const orders = new Map(data.orders.map((row) => [row.id, row]));
     const customers = new Map(data.customers.map((row) => [row.id, row]));
     const addresses = new Map(data.addresses.map((row) => [row.id, row]));
@@ -65,11 +70,11 @@ export function checkSeedInvariants(db: DatabaseConnection): InvariantReport {
       const address = addresses.get(order.address_id);
       check(address && address.customer_id === order.customer_id, `${order.id} address ownership`);
       check(
-        address.city === restaurants.get(order.restaurant_id)?.city,
+        options.operational || address.city === restaurants.get(order.restaurant_id)?.city,
         `${order.id} delivery city`,
       );
       check(
-        timestamp(order.placed_at) >= anchor - 30 * 86400000 &&
+        (options.operational || timestamp(order.placed_at) >= anchor - 30 * 86400000) &&
           timestamp(order.updated_at) <= anchor,
         `${order.id} lies in the fixed 30-day window`,
       );
@@ -89,7 +94,28 @@ export function checkSeedInvariants(db: DatabaseConnection): InvariantReport {
       for (const field of Object.keys(expected) as (keyof typeof expected)[])
         check(order[field] === expected[field], `${order.id} pricing.${field}`);
       const chain = [...(events.get(order.id) ?? [])].sort(
-        (a, b) => timestamp(a.at) - timestamp(b.at) || a.id.localeCompare(b.id),
+        (a, b) =>
+          timestamp(a.at) - timestamp(b.at) ||
+          [
+            'placed',
+            'accepted',
+            'preparing',
+            'ready',
+            'picked_up',
+            'out_for_delivery',
+            'delivered',
+            'cancelled',
+          ].indexOf(a.to_status) -
+            [
+              'placed',
+              'accepted',
+              'preparing',
+              'ready',
+              'picked_up',
+              'out_for_delivery',
+              'delivered',
+              'cancelled',
+            ].indexOf(b.to_status),
       );
       check(chain.length > 0, `${order.id} event chain exists`);
       let previous: OrderStatus | null = null;
@@ -193,16 +219,24 @@ export function checkSeedInvariants(db: DatabaseConnection): InvariantReport {
         `${order.id} delivery timestamps match events`,
       );
       const expectedStatus =
-        order.status === 'delivered'
-          ? 'delivered'
-          : order.status === 'out_for_delivery'
-            ? 'out_for_delivery'
-            : order.status === 'picked_up'
-              ? 'picked_up'
-              : delivery.partner_id === null
-                ? 'pending'
-                : 'assigned';
-      check(delivery.status === expectedStatus, `${order.id} delivery status matches order`);
+        order.status === 'cancelled' && options.operational
+          ? 'cancelled'
+          : order.status === 'delivered'
+            ? 'delivered'
+            : order.status === 'out_for_delivery'
+              ? 'out_for_delivery'
+              : order.status === 'picked_up'
+                ? 'picked_up'
+                : delivery.partner_id === null
+                  ? 'pending'
+                  : 'assigned';
+      check(
+        (options.operational &&
+          order.status === 'cancelled' &&
+          ['pending', 'assigned', 'cancelled'].includes(delivery.status)) ||
+          delivery.status === expectedStatus,
+        `${order.id} delivery status matches order`,
+      );
       if (delivery.partner_id === null)
         check(
           delivery.assigned_at === null && delivery.eta_min === null && !pickup,
@@ -217,13 +251,21 @@ export function checkSeedInvariants(db: DatabaseConnection): InvariantReport {
         );
         const accepted = chain.find((event) => event.to_status === 'accepted');
         check(
-          accepted && delivery.assigned_at === accepted.at,
+          options.operational
+            ? timestamp(delivery.assigned_at) >= timestamp(order.placed_at) &&
+                timestamp(delivery.assigned_at) <= anchor
+            : accepted && delivery.assigned_at === accepted.at,
           `${order.id} assignment chronology`,
         );
         const intervals = assignments.get(delivery.partner_id) ?? [];
         intervals.push({
           start: timestamp(delivery.assigned_at),
-          end: delivery.delivered_at === null ? Infinity : timestamp(delivery.delivered_at),
+          end:
+            delivery.delivered_at !== null
+              ? timestamp(delivery.delivered_at)
+              : order.status === 'cancelled'
+                ? timestamp(order.updated_at)
+                : Infinity,
         });
         assignments.set(delivery.partner_id, intervals);
         if (order.status !== 'delivered' && order.status !== 'cancelled') {
@@ -240,7 +282,7 @@ export function checkSeedInvariants(db: DatabaseConnection): InvariantReport {
         busy.has(partner.id) ? partner.status === 'busy' : partner.status !== 'busy',
         `${partner.id} availability matches active assignments`,
       );
-    for (const [partnerId, intervals] of assignments) {
+    for (const [partnerId, intervals] of options.operational ? [] : assignments) {
       intervals.sort((a, b) => a.start - b.start);
       for (let n = 1; n < intervals.length; n++)
         check(
@@ -257,6 +299,8 @@ export function checkSeedInvariants(db: DatabaseConnection): InvariantReport {
         'daily invoice sequences are contiguous and unique',
       );
     }
+    if (options.operational)
+      return { counts: seedCounts(data), contentHash: seedContentHash(data) };
     const edge = (id: string) => {
       const order = orders.get(id);
       check(order, `known edge case ${id} exists`);

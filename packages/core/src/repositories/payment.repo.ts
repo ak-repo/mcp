@@ -3,6 +3,13 @@ import type { DatabaseConnection } from '../db/connection.js';
 import { many } from './common.js';
 export function createPaymentRepository(db: DatabaseConnection) {
   return {
+    insert(value: Payment) {
+      const row = PaymentSchema.parse(value);
+      const columns = Object.keys(PaymentSchema.shape);
+      db.prepare(
+        `INSERT INTO payments (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+      ).run(...columns.map((key) => row[key as keyof Payment]));
+    },
     forOrder: (id: string) =>
       many(
         db,

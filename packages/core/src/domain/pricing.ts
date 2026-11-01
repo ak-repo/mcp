@@ -7,6 +7,12 @@ import {
   subtractPaise,
 } from '@foodops/shared';
 
+export const ORDER_FEES = Object.freeze({
+  delivery_fee_paise: 3000,
+  platform_fee_paise: 500,
+  discount_paise: 0,
+});
+
 export interface PricingItem {
   unit_price_paise: number;
   qty: number;

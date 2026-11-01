@@ -1,8 +1,67 @@
-import { ToolCallListFiltersSchema, ToolCallLogSchema } from '@foodops/shared';
+import {
+  AppError,
+  ErrorCode,
+  TimestampSchema,
+  ToolCallListFiltersSchema,
+  ToolCallLogSchema,
+} from '@foodops/shared';
 import { keys, newId, now, parse, type ServiceContext } from './context.js';
 import type { AuditInput, AuditListInput } from './types.js';
 export function createAuditService(context: ServiceContext) {
+  function bounds(id: number, limit: number) {
+    if (
+      !Number.isSafeInteger(id) ||
+      id < 0 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 10000
+    )
+      throw new AppError(
+        ErrorCode.VALIDATION,
+        'Invalid change cursor or limit',
+        'Use a nonnegative safe integer cursor and a limit from 1 to 10000',
+      );
+  }
   return {
+    listChangesAfter(id: number, limit = 1000) {
+      bounds(id, limit);
+      return context.read((repos) => repos.audit.changesAfter(id, limit));
+    },
+    changeSnapshotAfter(id: number, limit = 1000) {
+      bounds(id, limit);
+      return context.read((repos) => {
+        const bounds = repos.audit.changeBounds();
+        const items = repos.audit.changesAfter(id, limit);
+        const last = items.at(-1);
+        const hasMore =
+          items.length === limit &&
+          last !== undefined &&
+          repos.audit.changesAfter(last.id, 1).length > 0;
+        return { ...bounds, items, hasMore };
+      });
+    },
+    maxChangeId() {
+      return context.read((repos) => repos.audit.changeBounds().max);
+    },
+    changeBounds() {
+      return context.read((repos) => repos.audit.changeBounds());
+    },
+    maxCallRowId() {
+      return context.read((repos) => repos.audit.maxCallRowId());
+    },
+    listCallsAfterRowId(id: number, limit = 1000) {
+      bounds(id, limit);
+      return context.read((repos) => repos.audit.callsAfterRowId(id, limit));
+    },
+    pruneChangesBefore(iso: string) {
+      const at = parse(TimestampSchema, iso, 'retention timestamp');
+      return context.mutate(
+        'audit.pruneChangesBefore',
+        { at } as { at: string; idempotencyKey?: string },
+        (repos) => repos.audit.pruneChanges(at),
+        (value) => Number(value),
+      );
+    },
     recordCall(input: AuditInput) {
       keys(input, [
         'sessionId',

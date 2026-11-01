@@ -1,3 +1,4 @@
+export * from './schemas/changes.js';
 export * from './errors.js';
 export * from './money.js';
 export * from './schemas/audit.js';

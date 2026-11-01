@@ -1,5 +1,7 @@
 import {
   decodeCursor,
+  ChangeSchema,
+  ToolCallFeedSchema,
   IdempotencyKeySchema,
   ToolCallLogSchema,
   type IdempotencyKey,
@@ -10,6 +12,36 @@ import type { DatabaseConnection } from '../db/connection.js';
 import { many, one, page } from './common.js';
 export function createAuditRepository(db: DatabaseConnection) {
   return {
+    changesAfter: (id: number, limit: number) =>
+      many(
+        db,
+        'SELECT id, entity, entity_id, order_id, op, at FROM change_log WHERE id > ? ORDER BY id LIMIT ?',
+        [id, limit],
+        ChangeSchema,
+      ),
+    changeBounds() {
+      return db
+        .prepare<[], { min: number; max: number }>(
+          "SELECT coalesce(min(id),0) AS min, coalesce((SELECT seq FROM sqlite_sequence WHERE name='change_log'),0) AS max FROM change_log",
+        )
+        .get()!;
+    },
+    pruneChanges(at: string) {
+      return db.prepare('DELETE FROM change_log WHERE at < ?').run(at).changes;
+    },
+    maxCallRowId() {
+      return db
+        .prepare<[], { id: number }>('SELECT coalesce(max(rowid),0) AS id FROM tool_call_log')
+        .get()!.id;
+    },
+    callsAfterRowId(id: number, limit: number) {
+      return many(
+        db,
+        'SELECT rowid, tool, status, error_code, latency_ms, at FROM tool_call_log WHERE rowid > ? ORDER BY rowid LIMIT ?',
+        [id, limit],
+        ToolCallFeedSchema,
+      );
+    },
     key: (key: string) =>
       one(
         db,

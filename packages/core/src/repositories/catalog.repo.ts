@@ -13,6 +13,18 @@ const restaurantColumns = 'id, name, cuisine, city, area, rating, prep_time_min,
 const menuColumns = 'id, restaurant_id, name, price_paise, is_veg, is_available';
 export function createCatalogRepository(db: DatabaseConnection) {
   return {
+    placementCustomers: () =>
+      many(
+        db,
+        'SELECT id, customer_id, label, line1, area, city, pincode FROM addresses ORDER BY id',
+        [],
+        AddressSchema,
+      ),
+    menuItem: (id: string) =>
+      one(db, `SELECT ${menuColumns} FROM menu_items WHERE id = ?`, [id], MenuItemSchema, [
+        'is_veg',
+        'is_available',
+      ]),
     restaurant: (id: string) =>
       one(db, `SELECT ${restaurantColumns} FROM restaurants WHERE id = ?`, [id], RestaurantSchema, [
         'is_open',

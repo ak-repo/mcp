@@ -9,7 +9,7 @@ import {
   type Delivery,
   type Order,
 } from '@foodops/shared';
-import { assertReassignment } from '../domain/policies.js';
+import { assertReassignment, DEFAULT_DELIVERY_ETA_MIN } from '../domain/policies.js';
 import {
   assertExpectedPreview,
   id,
@@ -236,6 +236,7 @@ export function createDeliveryService(context: ServiceContext) {
             ...delivery,
             partner_id: partner.id,
             status: 'assigned',
+            eta_min: delivery.eta_min ?? DEFAULT_DELIVERY_ETA_MIN,
             assigned_at: now(),
           });
           const available = previous

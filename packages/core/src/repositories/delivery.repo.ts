@@ -16,6 +16,13 @@ export const DELIVERY_COLUMNS =
 const partnerColumns = 'id, name, phone, vehicle, status';
 export function createDeliveryRepository(db: DatabaseConnection) {
   return {
+    insert(value: Delivery) {
+      const row = DeliverySchema.parse(value);
+      const columns = Object.keys(DeliverySchema.shape);
+      db.prepare(
+        `INSERT INTO deliveries (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+      ).run(...columns.map((key) => row[key as keyof Delivery]));
+    },
     activeOrders(filters: DeliveryListFilters) {
       const cursor = filters.cursor ? decodeCursor(filters.cursor) : null;
       return page(
