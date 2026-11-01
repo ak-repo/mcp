@@ -18,7 +18,8 @@
     "migrate": "pnpm --filter @foodops/core migrate",
     "start:http": "pnpm --silent --filter @foodops/mcp-server start:http",
     "dev:api": "pnpm --filter @foodops/api dev:api",
-    "start:api": "pnpm --filter @foodops/api start:api"
+    "start:api": "pnpm --filter @foodops/api start:api",
+    "smoke:api": "node scripts/smoke-api.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

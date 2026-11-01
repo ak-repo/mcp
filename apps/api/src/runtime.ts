@@ -1,3 +1,4 @@
+import { createSimulator, type Simulator } from './simulator/simulator.js';
 import { createChangeFeed, type ChangeFeed } from './events/change-feed.js';
 import { createTickets } from './events/tickets.js';
 import { createStreams } from './events/streams.js';
@@ -10,6 +11,7 @@ import type { Config } from './config.js';
 
 export interface Runtime {
   services: Services;
+  simulator: Simulator;
   feed: ChangeFeed;
   tickets: ReturnType<typeof createTickets>;
   streams: ReturnType<typeof createStreams>;
@@ -70,6 +72,12 @@ export function openRuntime(config: Config): Runtime {
     const feed = createChangeFeed(services, logger, config.CHANGE_FEED_POLL_MS);
     const tickets = createTickets();
     const streams = createStreams(config.SSE_MAX_STREAMS);
+    const simulator = createSimulator(
+      services,
+      logger,
+      { enabled: config.SIMULATOR === 'on', interval_ms: config.SIMULATOR_INTERVAL_MS },
+      config.SIMULATOR_SEED,
+    );
     let closed = false;
     return {
       services,
@@ -77,11 +85,14 @@ export function openRuntime(config: Config): Runtime {
       feed,
       tickets,
       streams,
+      simulator,
       start() {
         feed.start();
         tickets.start();
+        simulator.start();
       },
       async stop() {
+        await simulator.stop();
         streams.close();
         tickets.stop();
         await feed.stop();
@@ -90,6 +101,7 @@ export function openRuntime(config: Config): Runtime {
       close() {
         if (closed) return;
         closed = true;
+        void simulator.stop();
         streams.close();
         tickets.stop();
         void feed.stop();

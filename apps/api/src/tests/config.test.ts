@@ -28,6 +28,8 @@ describe('API configuration', () => {
       CHANGE_FEED_POLL_MS: 500,
       SSE_MAX_STREAMS: 50,
       SSE_REPLAY_LIMIT: 1000,
+      SIMULATOR_INTERVAL_MS: 5000,
+      SIMULATOR_SEED: 42,
     });
   });
   it('process values override .env without mutating process environment', () => {
@@ -65,12 +67,16 @@ describe('API configuration', () => {
     ['WEB_ORIGIN', ''],
     ['LOG_LEVEL', 'verbose'],
     ['SIMULATOR', 'true'],
-    ['SIMULATOR', 'on'],
     ['CHANGE_FEED_POLL_MS', '99'],
     ['CHANGE_FEED_POLL_MS', '60001'],
     ['SSE_MAX_STREAMS', '0'],
     ['SSE_MAX_STREAMS', '1001'],
     ['SSE_REPLAY_LIMIT', '10001'],
+    ['SIMULATOR_INTERVAL_MS', '999'],
+    ['SIMULATOR_INTERVAL_MS', '60001'],
+    ['SIMULATOR_SEED', ''],
+    ['SIMULATOR_SEED', '-1'],
+    ['SIMULATOR_SEED', '4294967296'],
     ['RATE_LIMIT_PER_MIN', '0'],
     ['RATE_LIMIT_PER_MIN', '-1'],
     ['RATE_LIMIT_PER_MIN', '1.5'],
@@ -90,4 +96,13 @@ describe('API configuration', () => {
         API_HOST,
       );
   });
+});
+
+it('accepts simulator startup and bounded live-update configuration', () => {
+  expect(
+    loadConfig({
+      root: root(),
+      env: { ADMIN_TOKEN: TOKEN, SIMULATOR: 'on', SIMULATOR_SEED: '0', SSE_REPLAY_LIMIT: '10000' },
+    }),
+  ).toMatchObject({ SIMULATOR: 'on', SIMULATOR_SEED: 0, SSE_REPLAY_LIMIT: 10000 });
 });

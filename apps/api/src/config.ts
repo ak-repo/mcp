@@ -63,6 +63,17 @@ export const ConfigSchema = z.object({
     .refine((value) => !/\s/.test(value)),
   WEB_ORIGIN: origins.prefault('http://localhost:5173'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  SIMULATOR_INTERVAL_MS: positiveInteger.pipe(z.number().min(1000).max(60000)).default(5000),
+  SIMULATOR_SEED: z
+    .union([
+      z.number(),
+      z
+        .string()
+        .regex(/^[0-9]+$/)
+        .transform(Number),
+    ])
+    .pipe(z.number().int().min(0).max(4294967295))
+    .default(42),
   SIMULATOR: z.enum(['off', 'on']).default('off'),
   CHANGE_FEED_POLL_MS: positiveInteger.pipe(z.number().min(100).max(60000)).default(500),
   SSE_MAX_STREAMS: positiveInteger.pipe(z.number().max(1000)).default(50),
@@ -96,11 +107,5 @@ export function loadConfig(options: { root?: string; env?: NodeJS.ProcessEnv } =
       'Check the API environment table; configuration values are never logged',
     );
   }
-  if (parsed.data.SIMULATOR === 'on')
-    throw new AppError(
-      ErrorCode.VALIDATION,
-      'SIMULATOR=on is not supported until the simulator phase',
-      'Set SIMULATOR=off',
-    );
   return { ...parsed.data, DB_PATH: resolve(root, parsed.data.DB_PATH) };
 }

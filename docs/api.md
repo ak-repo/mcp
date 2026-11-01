@@ -38,7 +38,7 @@ All domain successes, including writes and replays, use HTTP 200. Paths are case
 | POST    | `/api/deliveries/:orderId/reassign`         | `{ reason, partner_id, confirm: true }`                                               | `ReassignResult`          | `delivery.executeReassign`      | 200     |
 | OPTIONS | `*`                                         | Valid Origin + Access-Control-Request-Method; optional Access-Control-Request-Headers | Empty preflight response  | CORS plugin                     | 204     |
 
-`GET /api/ready` returns 503 when its core read fails. MCP connectivity checks, the MCP tool catalog, chat and providers remain deferred. SSE endpoints are documented below; simulator remains deferred.
+`GET /api/ready` returns 503 when its core read fails. MCP connectivity checks, the MCP tool catalog, chat and providers remain deferred. SSE and simulator endpoints are documented below.
 
 ### Query filters
 
@@ -168,3 +168,20 @@ Successful streams return `text/event-stream`. Frames contain `event`, JSON `dat
 - `mcp.call`: data `{tool, status, error_code, latency_ms, at}`, without args or SSE ID. Audit notifications are live-only; REST `/api/mcp/calls` supplies history.
 
 The feed polls every 500 ms by default and sees writes from API, MCP and other SQLite processes. At boot it starts at current maxima. A connection without `Last-Event-ID` receives future changes; one with the header replays retained rows then transitions to live without duplicate durable IDs. Change history is retained for 24 hours and pruned hourly. Invalid cursors produce 400; missing/expired/used tickets produce 401. Unavailable history, future IDs, or replay beyond `SSE_REPLAY_LIMIT` produce 409 `CONFLICT` before streaming: refresh REST state, request a new ticket, and reconnect without the header. Ticket and stream capacity limits produce 429 `LIMIT_EXCEEDED`. The default concurrent-stream limit is 50. Slow consumers are disconnected when their bounded queue fills; reconnect using the last received durable ID. Shutdown ends streams before database handles close.
+
+## Simulator
+
+| Method | Path             | Purpose                                                                                 |
+| ------ | ---------------- | --------------------------------------------------------------------------------------- |
+| GET    | `/api/simulator` | Bearer-authenticated configuration and cumulative counters (200).                       |
+| POST   | `/api/simulator` | Bearer-authenticated runtime configuration; strict body `{enabled, interval_ms}` (200). |
+
+`interval_ms` must be an integer from 1000 to 60000; both fields are required on POST. Response: `{enabled, interval_ms, ticks, orders_placed, advanced, cancelled, errors}`. POST uses the write rate limiter. Invalid bodies/unknown fields return 400 `VALIDATION`; auth failures return 401; rate limits return 429.
+
+```sh
+curl -H "Authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:3002/api/simulator
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"enabled":true,"interval_ms":5000}' http://127.0.0.1:3002/api/simulator
+```
+
+Simulator activity is explicitly enabled autonomous synthetic traffic, with actor `system`; it does not interpret order notes. It is off by default. Each jittered tick may place one order and processes up to three orders, with a 5% pre-pickup cancellation chance per selected order. It skips failed payments, assigns available partners before pickup, and uses the normal core transactions, pricing, invoices and cancellation/refund rules. Disabling waits for the current tick and stops future scheduling. Errors are logged/counted independently. Runtime controls and counters are in memory: restart restores environment defaults and continues existing database orders; no duplicate startup loop is created.

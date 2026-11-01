@@ -57,17 +57,19 @@ Set a separate `ADMIN_TOKEN` in `.env` (32+ characters, no whitespace), then run
 | `ADMIN_TOKEN`        | required                | At least 32 characters without whitespace; separate from MCP authentication.                              |
 | `WEB_ORIGIN`         | `http://localhost:5173` | Comma-separated exact HTTP(S) origins; no wildcards, trailing slash, paths, or credentials.               |
 | `LOG_LEVEL`          | `info`                  | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                          |
-| `SIMULATOR`          | `off`                   | `off` or `on`; `on` fails startup until the simulator phase is implemented.                               |
+| `SIMULATOR`          | `off`                   | `off` or `on`; `on` enables autonomous synthetic traffic.                                                 |
 | `RATE_LIMIT_PER_MIN` | `120`                   | Positive safe integer; per-IP, per-process requests per minute. Write hook uses one quarter, minimum one. |
 
-### Live updates
+### Live updates and simulator
 
-Use `POST /api/stream/ticket` with bearer auth, then `GET /api/stream?ticket=...` within 30 seconds. Tickets are single-use; reconnect with a fresh ticket and `Last-Event-ID` for retained database changes. Never put the admin token in a URL. See [the API reference](docs/api.md) for event/replay contracts.
+Use `POST /api/stream/ticket` with bearer auth, then `GET /api/stream?ticket=...` within 30 seconds. Tickets are single-use; reconnect with a fresh ticket and `Last-Event-ID` for retained database changes. Never put the admin token in a URL. See [the API reference](docs/api.md) for event/replay and simulator control contracts.
 
-| Variable              | Default | Bounds/purpose                |
-| --------------------- | ------- | ----------------------------- |
-| `CHANGE_FEED_POLL_MS` | 500     | 100–60000 ms                  |
-| `SSE_MAX_STREAMS`     | 50      | 1–1000 concurrent streams     |
-| `SSE_REPLAY_LIMIT`    | 1000    | 1–10000 durable replay events |
+| Variable                | Default | Bounds/purpose                               |
+| ----------------------- | ------- | -------------------------------------------- |
+| `CHANGE_FEED_POLL_MS`   | 500     | 100–60000 ms                                 |
+| `SSE_MAX_STREAMS`       | 50      | 1–1000 concurrent streams                    |
+| `SSE_REPLAY_LIMIT`      | 1000    | 1–10000 durable replay events                |
+| `SIMULATOR_INTERVAL_MS` | 5000    | 1000–60000 ms, ±10% jitter clamped to bounds |
+| `SIMULATOR_SEED`        | 42      | Unsigned 32-bit action seed                  |
 
-`SIMULATOR=off` remains required until the simulator phase.
+`SIMULATOR=off` is the default. With `on`, synthetic actions use core services as `system`. GET/POST `/api/simulator` reports statistics and changes runtime settings; restart restores environment defaults. Run `pnpm smoke:api` after building to exercise SSE and REST cancellation on an isolated temporary seed.
