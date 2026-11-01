@@ -208,19 +208,27 @@ it('completes preview, confirm, replay and persists events and audited calls', a
   const preview = CallToolResultSchema.parse(
     await connection.callTool({ name: 'advance_order_status', arguments: args }),
   );
-  expect(preview.structuredContent).toMatchObject({ data: { confirm_required: true } });
+  expect(preview.structuredContent).toMatchObject({ data: { requires_user_approval: true } });
   expect(runtime.services.order.getOrder(id)).toEqual(before);
   expect(businessHash()).toBe(hash);
   const confirmed = CallToolResultSchema.parse(
     await connection.callTool({
       name: 'advance_order_status',
-      arguments: { ...args, confirm: true },
+      arguments: {
+        ...args,
+        confirmation_token: (preview.structuredContent!['data'] as { confirmation_token: string })
+          .confirmation_token,
+      },
     }),
   );
   const replay = CallToolResultSchema.parse(
     await connection.callTool({
       name: 'advance_order_status',
-      arguments: { ...args, confirm: true },
+      arguments: {
+        ...args,
+        confirmation_token: (preview.structuredContent!['data'] as { confirmation_token: string })
+          .confirmation_token,
+      },
     }),
   );
   expect(confirmed.isError).not.toBe(true);

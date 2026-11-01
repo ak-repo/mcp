@@ -1,3 +1,4 @@
+import { writeFlow } from '../lib/confirmation.js';
 import { TextSchema } from '@foodops/shared';
 import { defineTool } from '../lib/define-tool.js';
 import { defined } from './schemas.js';
@@ -7,35 +8,34 @@ import {
   OrderMutationSchema,
   writeResultSchema,
   writeAnnotations,
-  approvalError,
 } from './write-schemas.js';
 
 export const tool = defineTool({
   name: 'cancel_order',
   description:
-    "Cancel an order before pickup. Use after reviewing the order and the user's cancellation reason. Without confirm:true returns a preview and any automatic remaining refund; captured payments require explicit approval. With confirm:true executes the cancellation and refund atomically and returns their records. Use idempotency_key for retries.",
+    'Cancel an order before pickup and refund the remaining captured payment atomically; returns order, delivery, partner, event and payment/refund records. Use after inspecting current state. Call without a confirmation_token to preview, show the preview to the user, then call again with the returned token only after explicit user approval. Tokens expire after five minutes and bind the exact arguments and preview. Use action:execute to request execution; it requires a token. Pass idempotency_key for safe retries.',
   inputSchema: WriteInputSchema.extend({ reason: TextSchema }),
   dataSchema: writeResultSchema(CancelPreviewSchema, OrderMutationSchema),
   annotations: { ...writeAnnotations, destructiveHint: true },
   hint: 'Inspect the order with get_order; retry confirmed writes with the same idempotency_key.',
-  execute: (input, services) => {
+  execute: (input, services, _signal, confirmation) => {
     const request = defined({
       orderId: input.order_id,
       reason: input.reason,
       actor: 'ai' as const,
       idempotencyKey: input.idempotency_key,
     });
-    return input.confirm === true
-      ? { confirm_required: false, result: services.order.executeCancel(request) }
-      : { confirm_required: true, preview: services.order.previewCancel(request) };
+    return writeFlow({
+      tool: 'cancel_order',
+      input,
+      confirmation,
+      preview: () => services.order.previewCancel(request),
+      replay: () => services.order.replayCancel(request),
+      execute: (expectedPreview) => services.order.executeCancel(request, { expectedPreview }),
+    });
   },
-  resultError: (data) =>
-    data.confirm_required &&
-    (data.preview.requiresConfirmation || data.preview.requiresPaymentConfirmation)
-      ? approvalError()
-      : undefined,
   summarize: (data) =>
-    data.confirm_required
+    data.requires_user_approval
       ? 'Preview only. Explicit user approval is required before execution.'
       : 'Confirmed operation completed.',
 });

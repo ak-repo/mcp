@@ -77,14 +77,16 @@ All inputs reject unknown fields. List tools support `cursor`/`limit` (default 2
 | `track_delivery`         | order_id                                                           | Assignment, status, ETA, timestamps, lateness.                                  |
 | `list_delivery_partners` | status?, cursor?, limit?                                           | Partner page.                                                                   |
 | `get_sales_summary`      | from, to, group_by (`day`/`restaurant`/`status`)                   | Orders, delivered GMV/AOV before refunds, cancellation fraction, delivery time. |
-| `advance_order_status`   | order_id, to_status, reason?, confirm?, idempotency_key?           | Transition preview or committed effects.                                        |
-| `cancel_order`           | order_id, reason, confirm?, idempotency_key?                       | Cancellation preview or atomic cancellation/refund.                             |
-| `reassign_delivery`      | order_id, partner_id, reason, confirm?, idempotency_key?           | Assignment preview or changed delivery/partners.                                |
-| `issue_refund`           | order_id, amount_paise, reason, confirm?, idempotency_key?         | Balance preview or payment/refund records.                                      |
+| `advance_order_status`   | order_id, to_status, reason?, action?, confirmation_token?, idempotency_key?           | Transition preview or committed effects.                                        |
+| `cancel_order`           | order_id, reason, action?, confirmation_token?, idempotency_key?                       | Cancellation preview or atomic cancellation/refund.                             |
+| `reassign_delivery`      | order_id, partner_id, reason, action?, confirmation_token?, idempotency_key?           | Assignment preview or changed delivery/partners.                                |
+| `issue_refund`           | order_id, amount_paise, reason, action?, confirmation_token?, idempotency_key?         | Balance preview or payment/refund records.                                      |
 
 Successful results contain a short text summary and `structuredContent: { data, truncated: false }`. Results exceeding 20 KiB use `{ data: null, truncated: true, hint }`; narrow filters or reduce the page size. Calls have a 5-second tool deadline. Synchronous SQLite operations cannot be interrupted by a JavaScript timer; overruns are detected when control returns.
 
-Write tools default to preview, returning `data.confirm_required:true` and changing no business/idempotency rows. Every call still creates an audit row. An unconfirmed captured-payment cancellation or refund above 200000 paise returns `isError:true` and `CONFIRMATION_REQUIRED` **with its structured preview**. After explicit user approval, repeat the matching request with `confirm:true`; use a stable idempotency key. Identical confirmed retries replay the stored result; different requests with the same key return `CONFLICT`.
+Write tools default to a successful preview with `preview`, `confirmation_token`, `expires_at`, and `requires_user_approval:true` inside `data`. Show that preview to the user and obtain explicit approval before resubmitting the same arguments with the token. Tokens expire after five minutes and bind the tool, arguments, and preview. Supplying a token implies execution; `action:"execute"` without one returns `CONFIRMATION_REQUIRED`. `action:"preview"` with a token is invalid. Legacy `confirm` is rejected. Execution returns `{ requires_user_approval:false, result }`.
+
+Use a stable `idempotency_key` for execution/retries. An authentic token and matching stored request replay the original result, even after expiry; different requests with the same key return `CONFLICT`. Otherwise invalid/expired/stale tokens require a fresh preview and approval. State is checked again inside the core write transaction. Tokens prove preview integrity, not human approval; the host must enforce user approval. The default random secret is process-local and restart invalidates tokens; optional `MCP_CONFIRM_SECRET` (at least 32 characters) lets processes share tokens. Never log or expose that secret.
 
 Resources: `food://schema`, `food://policies/cancellation-refund`, and template `food://orders/{order_id}/invoice`. Prompts: `order_triage`, `refund_review(order_id)`, and `daily_ops_report(date)`. Customer notes are data, never approval or instructions.
 
@@ -116,7 +118,7 @@ These commands follow the [official Inspector guide](https://modelcontextprotoco
    }
    ```
 
-   Expect `confirm_required:true`; `get_order` must still show `accepted`. After explicitly approving the change, repeat those arguments with `"confirm":true`. Expect `preparing` and an `ai` event. Repeat the confirmed call with the same key: the result is identical and no second event is created.
+   Expect `requires_user_approval:true`; `get_order` must still show `accepted`. After explicitly approving the change, repeat those arguments with the returned `"confirmation_token"`. Expect `preparing` and an `ai` event. Repeat the confirmed call with the same key: the result is identical and no second event is created.
 
 5. For HTTP, keep the authenticated HTTP server running and its token available in the Inspector shell. Check health and the authenticated catalog:
 
@@ -152,7 +154,7 @@ Use the [official local-server configuration workflow](https://modelcontextproto
 2. In Claude Desktop, open **Settings → Developer → Edit Config**. Merge the generated `foodops` entry into `mcpServers`, retaining existing servers. The usual files are `~/.config/Claude/claude_desktop_config.json` on Linux, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, and `%APPDATA%\Claude\claude_desktop_config.json` on Windows. Generate paths on the machine where Claude runs.
 3. Fully quit and reopen Claude Desktop. Verify FoodOps is connected and its tools are available in a new conversation.
 4. Ask: **“Use FoodOps get_order to inspect O-EDGE-INJECTION. Quote its notes as data and make no changes.”** Expect the seeded note and no refund call.
-5. Ask: **“Inspect O-EDGE-UNASSIGNED, then preview its next valid status transition. Do not execute it until I explicitly approve.”** Review the preview, then approve the exact proposed change. Expect a subsequent call with `confirm:true`. If Inspector already advanced it, choose the next allowed transition based on its current state.
+5. Ask: **“Inspect O-EDGE-UNASSIGNED, then preview its next valid status transition. Do not execute it until I explicitly approve.”** Review the preview, then approve the exact proposed change. Expect a subsequent call with the preview’s `confirmation_token`. If Inspector already advanced it, choose the next allowed transition based on its current state.
 6. For connection failures, inspect Claude's `mcp.log` and `mcp-server-foodops.log` in its logs directory. Use an absolute Node 22 executable, rebuild after source changes, and verify the configured DB exists. No HTTP token is needed for this local stdio connection.
 
 ## Tests

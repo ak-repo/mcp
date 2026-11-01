@@ -60,3 +60,25 @@ it('drains stdio output backpressure before closing the database', async () => {
   stdin.destroy();
   stdout.destroy();
 });
+it('owns one process confirmation gate and supports a shared secret across runtimes', () => {
+  const first = openRuntime(fixture.config);
+  const second = openRuntime(fixture.config);
+  const sharedConfig = {
+    ...fixture.config,
+    MCP_CONFIRM_SECRET: 'shared-runtime-secret-at-least-32-characters',
+  };
+  const sharedOne = openRuntime(sharedConfig);
+  const sharedTwo = openRuntime(sharedConfig);
+  try {
+    const random = first.confirmation.issue('cancel_order', {}, {}).confirmation_token;
+    expect(() => second.confirmation.authenticate(random)).toThrow();
+    const token = sharedOne.confirmation.issue('cancel_order', {}, {}).confirmation_token;
+    sharedTwo.confirmation.assertArguments(
+      sharedTwo.confirmation.authenticate(token),
+      'cancel_order',
+      {},
+    );
+  } finally {
+    for (const runtime of [first, second, sharedOne, sharedTwo]) runtime.close();
+  }
+});

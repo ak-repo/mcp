@@ -10,6 +10,7 @@ import {
 } from '@foodops/shared';
 import { assertReassignment } from '../domain/policies.js';
 import {
+  assertExpectedPreview,
   id,
   keys,
   now,
@@ -19,6 +20,7 @@ import {
   required,
   singleton,
   writeInput,
+  type Presented,
   type Repositories,
   type ServiceContext,
 } from './context.js';
@@ -128,6 +130,20 @@ export function advanceDelivery(repos: Repositories, order: Order, at: string): 
     repos.delivery.updatePartner({ ...plan.releasePartner, status: 'available' });
   return plan.delivery;
 }
+function reassignPreview(repos: Repositories, input: ReassignInput) {
+  const { order, delivery, partner, previous } = reassignPlan(repos, input);
+  return {
+    order_id: order.id,
+    delivery_id: delivery.id,
+    previous_partner_id: previous?.id ?? null,
+    partner_id: partner.id,
+    previous_partner_status_after: previous ? 'available' : null,
+    partner_status_after: 'busy',
+    delivery_status_after: 'assigned',
+    refund_amount_paise: 0,
+    requiresConfirmation: false,
+  };
+}
 export function createDeliveryService(context: ServiceContext) {
   const validate = (input: ReassignInput) => {
     writeInput(input, ['orderId', 'partnerId']);
@@ -166,27 +182,22 @@ export function createDeliveryService(context: ServiceContext) {
     },
     previewReassign(input: ReassignInput) {
       validate(input);
-      return context.read((repos) => {
-        const { order, delivery, partner, previous } = reassignPlan(repos, input);
-        return {
-          order_id: order.id,
-          delivery_id: delivery.id,
-          previous_partner_id: previous?.id ?? null,
-          partner_id: partner.id,
-          previous_partner_status_after: previous ? 'available' : null,
-          partner_status_after: 'busy',
-          delivery_status_after: 'assigned',
-          refund_amount_paise: 0,
-          requiresConfirmation: false,
-        };
-      });
+      return context.read((repos) => reassignPreview(repos, input));
     },
-    executeReassign(input: ReassignInput) {
+    replayReassign(input: ReassignInput) {
+      validate(input);
+      return context.replay('delivery.executeReassign', input, decodeReassign);
+    },
+    executeReassign(
+      input: ReassignInput,
+      options?: { expectedPreview?: Presented<ReturnType<typeof reassignPreview>> },
+    ) {
       validate(input);
       return context.mutate(
         'delivery.executeReassign',
         input,
         (repos): ReassignResult => {
+          assertExpectedPreview(options?.expectedPreview, () => reassignPreview(repos, input));
           const { order, delivery, partner, previous } = reassignPlan(repos, input);
           const updated = DeliverySchema.parse({
             ...delivery,

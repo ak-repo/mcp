@@ -1,3 +1,4 @@
+import { createConfirmationGate } from '../lib/confirmation.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,7 +51,11 @@ beforeEach(async () => {
   read = openReadOnly(write.name);
   services = createServices({ write, read });
   before = businessContent();
-  server = createServer({ services, logger: createLogger('silent') });
+  server = createServer({
+    services,
+    confirmation: createConfirmationGate(),
+    logger: createLogger('silent'),
+  });
   client = new Client({ name: 'foodops-test', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   serverTransport.sessionId = 'test-session';

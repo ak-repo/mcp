@@ -170,14 +170,16 @@ Descriptions are written for the model: what it does, when to use it, what it re
 | `track_delivery` | read | order\_id | Partner, status, ETA, timestamps, lateness flag. |
 | `list_delivery_partners` | read | status?, limit? | Used before reassignment. |
 | `get_sales_summary` | read | from, to, group\_by (`day`/`restaurant`/`status`) | Orders, GMV, avg order value, cancel rate, avg delivery time. |
-| `advance_order_status` | write | order\_id, to\_status, idempotency\_key? | Validates transition. |
-| `cancel_order` | write | order\_id, reason, confirm?, idempotency\_key? | Auto-refund if paid. |
-| `reassign_delivery` | write | order\_id, partner\_id, reason, confirm?, idempotency\_key? | Frees previous partner. |
-| `issue_refund` | write | order\_id, amount\_paise, reason, confirm?, idempotency\_key? | Enforces amount and limit rules. |
+| `advance_order_status` | write | order\_id, to\_status, action?, confirmation\_token?, idempotency\_key? | Validates transition. |
+| `cancel_order` | write | order\_id, reason, action?, confirmation\_token?, idempotency\_key? | Auto-refund if paid. |
+| `reassign_delivery` | write | order\_id, partner\_id, reason, action?, confirmation\_token?, idempotency\_key? | Frees previous partner. |
+| `issue_refund` | write | order\_id, amount\_paise, reason, action?, confirmation\_token?, idempotency\_key? | Enforces amount and limit rules. |
 
 **Annotations:** read tools set `readOnlyHint: true`. Write tools set `destructiveHint` (cancel, refund) and `idempotentHint: true` (with key support), so hosts can prompt appropriately.
 
-**Two-step writes:** when `confirm` is false or absent, a write tool performs **no change** and returns a preview (what would change, side effects such as the refund amount). With `confirm: true` it executes. This is a server-side guard that holds even if a host has no approval UI.
+**Two-step writes:** omit `confirmation_token` to preview without business changes. A successful preview returns `preview`, `confirmation_token`, `expires_at`, and `requires_user_approval:true` inside structured data. Show the preview to the user and obtain explicit approval before calling again with the token. `action` defaults to preview; supplying a token implies execute. Explicit `action:execute` requires a token, and `action:preview` cannot include one. The old `confirm` flag is rejected.
+
+Tokens use HMAC-SHA256 and expire after five minutes. They bind the tool, normalized arguments (excluding controls and idempotency key), and current preview. Changed state, invalid signatures, expiry, or missing execution tokens return `CONFIRMATION_REQUIRED`. Core rechecks the expected preview inside the write transaction. Matching idempotent retries return the original result, including with an expired authentic token; conflicting requests return `CONFLICT`. Runtime owns a random process secret; an optional shared `MCP_CONFIRM_SECRET` supports multiple processes. Tokens prove preview integrity, not human approval: the host must enforce approval independently.
 
 **Outputs:** every tool returns structured JSON plus a short text summary. Money fields carry both `*_paise` and a formatted `*_display` string.
 

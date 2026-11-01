@@ -84,6 +84,62 @@ export function canonical(value: unknown): string {
     );
   return json;
 }
+export function assertExpectedPreview(expected: unknown, preview: () => unknown): void {
+  if (expected === undefined) return;
+  try {
+    if (canonical(expected) === canonical(present(preview()))) return;
+  } catch (error) {
+    if (!(error instanceof AppError) || error.code === ErrorCode.INTERNAL) throw error;
+  }
+  throw new AppError(
+    ErrorCode.CONFLICT,
+    'Operation preview changed',
+    'Refresh the preview before retrying',
+    { precondition: 'preview_changed' },
+  );
+}
+function requestHash(operation: string, input: { idempotencyKey?: string }): string {
+  const semantic = Object.fromEntries(
+    Object.entries(input).filter(([key]) => key !== 'idempotencyKey'),
+  );
+  return createHash('sha256')
+    .update(canonical({ operation, input: semantic }))
+    .digest('hex');
+}
+function cached<T>(
+  repos: Repositories,
+  operation: string,
+  input: { idempotencyKey?: string },
+  decode: (value: unknown) => T,
+): Presented<T> | undefined {
+  const record = input.idempotencyKey === undefined ? null : repos.audit.key(input.idempotencyKey);
+  if (!record) return undefined;
+  if (record.operation !== operation || record.request_hash !== requestHash(operation, input))
+    throw new AppError(
+      ErrorCode.CONFLICT,
+      'Idempotency key was used for a different request',
+      'Replay the original request or use a new idempotency key',
+    );
+  const stored: unknown = JSON.parse(record.response_json);
+  const result = present(decode(stripDisplays(stored)));
+  // Legacy order responses predate the additive partner field.
+  const comparable =
+    stored !== null &&
+    typeof stored === 'object' &&
+    !('partner' in stored) &&
+    result !== null &&
+    typeof result === 'object' &&
+    'partner' in result
+      ? { ...stored, partner: null }
+      : stored;
+  if (canonical(result) !== canonical(comparable))
+    throw new AppError(
+      ErrorCode.INTERNAL,
+      'Stored idempotent response is invalid',
+      'Repair the idempotency record before retrying',
+    );
+  return result;
+}
 export function guard<T>(operation: () => T): T {
   try {
     return operation();
@@ -218,6 +274,15 @@ export function createContext(handles: ServiceHandles) {
       read<T>(operation: (repos: Repositories) => T): Presented<T> {
         return guard(() => present(read.transaction(() => operation(readRepos)).deferred()));
       },
+      replay<T>(
+        operation: string,
+        input: { idempotencyKey?: string },
+        decode: (value: unknown) => T,
+      ): Presented<T> | undefined {
+        return guard(() =>
+          read.transaction(() => cached(readRepos, operation, input, decode)).deferred(),
+        );
+      },
       mutate<T>(
         operation: string,
         input: { idempotencyKey?: string },
@@ -231,32 +296,12 @@ export function createContext(handles: ServiceHandles) {
               'Service writes cannot join a caller-owned transaction',
               'Call the service outside an existing transaction',
             );
-          const { idempotencyKey, ...semantic } = input;
-          const hash = createHash('sha256')
-            .update(canonical({ operation, input: semantic }))
-            .digest('hex');
+          const { idempotencyKey } = input;
+          const hash = requestHash(operation, input);
           return write
             .transaction(() => {
-              if (idempotencyKey !== undefined) {
-                const record = writeRepos.audit.key(idempotencyKey);
-                if (record) {
-                  if (record.operation !== operation || record.request_hash !== hash)
-                    throw new AppError(
-                      ErrorCode.CONFLICT,
-                      'Idempotency key was used for a different request',
-                      'Replay the original request or use a new idempotency key',
-                    );
-                  const stored: unknown = JSON.parse(record.response_json);
-                  const result = present(decode(stripDisplays(stored)));
-                  if (canonical(result) !== canonical(stored))
-                    throw new AppError(
-                      ErrorCode.INTERNAL,
-                      'Stored idempotent response is invalid',
-                      'Repair the idempotency record before retrying',
-                    );
-                  return result;
-                }
-              }
+              const replay = cached(writeRepos, operation, input, decode);
+              if (replay !== undefined) return replay;
               const result = present(execute(writeRepos));
               if (idempotencyKey !== undefined)
                 writeRepos.audit.insertKey({

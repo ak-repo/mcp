@@ -18,7 +18,8 @@ import { PresentedOrderSchema, PresentedPaymentSchema, PresentedInvoiceSchema } 
 
 export const WriteInputSchema = z.strictObject({
   order_id: IdSchema,
-  confirm: z.boolean().optional(),
+  action: z.enum(['preview', 'execute']).optional(),
+  confirmation_token: z.string().max(2048).optional(),
   idempotency_key: TextSchema.optional(),
 });
 const refundMoney = { refund_amount_paise: PaiseSchema, refund_amount_display: TextSchema };
@@ -95,9 +96,14 @@ export const ReassignResultSchema = z.strictObject({
   partner: DeliveryPartnerSchema,
 });
 export function writeResultSchema<P extends z.ZodType, R extends z.ZodType>(preview: P, result: R) {
-  return z.discriminatedUnion('confirm_required', [
-    z.strictObject({ confirm_required: z.literal(true), preview }),
-    z.strictObject({ confirm_required: z.literal(false), result }),
+  return z.discriminatedUnion('requires_user_approval', [
+    z.strictObject({
+      requires_user_approval: z.literal(true),
+      preview,
+      confirmation_token: z.string().min(1),
+      expires_at: z.iso.datetime(),
+    }),
+    z.strictObject({ requires_user_approval: z.literal(false), result }),
   ]);
 }
 export function approvalError(): AppError {

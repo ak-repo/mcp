@@ -15,6 +15,7 @@ import {
   CAPTURED_PAYMENT_STATUSES,
 } from '../domain/policies.js';
 import {
+  assertExpectedPreview,
   id,
   newId,
   now,
@@ -23,6 +24,7 @@ import {
   required,
   singleton,
   writeInput,
+  type Presented,
   type Repositories,
   type ServiceContext,
 } from './context.js';
@@ -108,6 +110,19 @@ export function decodeRefund(value: unknown): RefundResult {
     refund: RefundSchema.parse(row['refund']),
   };
 }
+function refundPreview(repos: Repositories, input: RefundInput) {
+  const { order, payment, balance } = refundPlan(repos, input);
+  return {
+    order_id: order.id,
+    payment_id: payment.id,
+    refund_amount_paise: input.amountPaise,
+    remaining_before_paise: balance.remaining,
+    remaining_after_paise: balance.remaining - input.amountPaise,
+    payment_status_after:
+      input.amountPaise === balance.remaining ? 'refunded' : 'partially_refunded',
+    requiresConfirmation: requiresRefundConfirmation(input.amountPaise),
+  };
+}
 export function createRefundService(context: ServiceContext) {
   const validate = (input: RefundInput) => {
     writeInput(input, ['orderId', 'amountPaise']);
@@ -118,26 +133,22 @@ export function createRefundService(context: ServiceContext) {
   return {
     previewRefund(input: RefundInput) {
       validate(input);
-      return context.read((repos) => {
-        const { order, payment, balance } = refundPlan(repos, input);
-        return {
-          order_id: order.id,
-          payment_id: payment.id,
-          refund_amount_paise: input.amountPaise,
-          remaining_before_paise: balance.remaining,
-          remaining_after_paise: balance.remaining - input.amountPaise,
-          payment_status_after:
-            input.amountPaise === balance.remaining ? 'refunded' : 'partially_refunded',
-          requiresConfirmation: requiresRefundConfirmation(input.amountPaise),
-        };
-      });
+      return context.read((repos) => refundPreview(repos, input));
     },
-    executeRefund(input: RefundInput) {
+    replayRefund(input: RefundInput) {
+      validate(input);
+      return context.replay('refund.executeRefund', input, decodeRefund);
+    },
+    executeRefund(
+      input: RefundInput,
+      options?: { expectedPreview?: Presented<ReturnType<typeof refundPreview>> },
+    ) {
       validate(input);
       return context.mutate(
         'refund.executeRefund',
         input,
         (repos) => {
+          assertExpectedPreview(options?.expectedPreview, () => refundPreview(repos, input));
           const { order, payment } = refundPlan(repos, input);
           return applyRefund(repos, order, payment, input.amountPaise, input);
         },

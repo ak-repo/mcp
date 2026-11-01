@@ -1,3 +1,4 @@
+import { createConfirmationGate, type ConfirmationGate } from '../lib/confirmation.js';
 import { statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -13,6 +14,7 @@ import { asAppError } from '../lib/error-mapper.js';
 export const DRAIN_TIMEOUT_MS = 10000;
 export interface Runtime {
   services: Services;
+  confirmation: ConfirmationGate;
   logger: Logger;
   checkHealth(): void;
   close(): void;
@@ -39,6 +41,9 @@ export function openRuntime(config: Config): Runtime {
     let closed = false;
     return {
       services,
+      confirmation: createConfirmationGate({
+        ...(config.MCP_CONFIRM_SECRET === undefined ? {} : { secret: config.MCP_CONFIRM_SECRET }),
+      }),
       logger: createLogger(config.LOG_LEVEL),
       checkHealth,
       close() {

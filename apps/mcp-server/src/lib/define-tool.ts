@@ -11,6 +11,7 @@ import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/proto
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import { asAppError, mapToolError } from './error-mapper.js';
+import type { ConfirmationGate } from './confirmation.js';
 import { logToolCall } from './tool-log.js';
 
 export const TOOL_TIMEOUT_MS = 5000;
@@ -18,6 +19,7 @@ export const MAX_RESULT_BYTES = 20 * 1024;
 export type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 export interface ToolDependencies {
   services: Services;
+  confirmation: ConfirmationGate;
   logger: Logger;
 }
 export interface ToolDefinition {
@@ -59,6 +61,7 @@ export function defineTool<I extends z.ZodType, O extends z.ZodType>(spec: {
     input: z.output<I>,
     services: Services,
     signal: AbortSignal,
+    confirmation: ConfirmationGate,
   ) => unknown | Promise<unknown>;
   summarize: (data: z.output<O>) => string;
 }): ToolDefinition {
@@ -105,7 +108,12 @@ export function defineTool<I extends z.ZodType, O extends z.ZodType>(spec: {
               'Invalid tool arguments',
               'Use only the documented fields, types, date ranges, and pagination limits',
             );
-          const value = await spec.execute(parsed.data, dependencies.services, controller.signal);
+          const value = await spec.execute(
+            parsed.data,
+            dependencies.services,
+            controller.signal,
+            dependencies.confirmation,
+          );
           if (performance.now() >= deadline) throw timeoutError();
           if (controller.signal.aborted) throw cancelledError();
           const output = spec.dataSchema.safeParse(value);

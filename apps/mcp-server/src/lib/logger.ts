@@ -18,7 +18,14 @@ export function createLogger(level: Config['LOG_LEVEL'] = 'info'): Logger {
       mixin: () => ({ ...logContext.getStore() }),
       base: { service: 'foodops-mcp' },
       redact: {
-        paths: ['MCP_AUTH_TOKEN', 'token', 'authorization', 'headers.authorization'],
+        paths: [
+          'MCP_AUTH_TOKEN',
+          'MCP_CONFIRM_SECRET',
+          'confirmation_token',
+          'token',
+          'authorization',
+          'headers.authorization',
+        ],
         censor: '[REDACTED]',
       },
     },

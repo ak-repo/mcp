@@ -1,3 +1,4 @@
+import { createConfirmationGate } from './confirmation.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +35,11 @@ beforeEach(() => {
   write = openWritable(join(directory, 'test.sqlite'));
   seedDatabase(write);
   read = openReadOnly(write.name);
-  dependencies = { services: createServices({ write, read }), logger: createLogger('silent') };
+  dependencies = {
+    confirmation: createConfirmationGate(),
+    services: createServices({ write, read }),
+    logger: createLogger('silent'),
+  };
 });
 afterEach(() => {
   vi.useRealTimers();

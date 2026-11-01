@@ -79,17 +79,18 @@ it('prints original invoice line items and totals and remains identical after a 
     expect(first).toContain(`quantity ${item.qty} @ ${item.unit_price_display}`);
   }
   expect(f.businessHash()).toBe(before);
-  expect(
-    (
-      await f.call('issue_refund', {
-        order_id: id,
-        amount_paise: 1,
-        reason: 'Approved adjustment',
-        confirm: true,
-        idempotency_key: 'invoice-unchanged',
-      })
-    ).isError,
-  ).not.toBe(true);
+  const args = {
+    order_id: id,
+    amount_paise: 1,
+    reason: 'Approved adjustment',
+    idempotency_key: 'invoice-unchanged',
+  };
+  const preview = await f.call('issue_refund', args);
+  const token = (preview.structuredContent!['data'] as { confirmation_token: string })
+    .confirmation_token;
+  expect((await f.call('issue_refund', { ...args, confirmation_token: token })).isError).not.toBe(
+    true,
+  );
   expect(text(await f.client.readResource({ uri }))).toBe(first);
 });
 it.each(['missing', 'O-EDGE-UNASSIGNED'])(

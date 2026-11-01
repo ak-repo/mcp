@@ -11,6 +11,11 @@ export const ConfigSchema = z.object({
     .trim()
     .min(1)
     .refine((value) => value !== ':memory:' && !value.includes('\0')),
+  MCP_CONFIRM_SECRET: z
+    .string()
+    .min(32)
+    .refine((value) => value.trim() === value)
+    .optional(),
   MCP_AUTH_TOKEN: z.string().trim().min(1).optional(),
   PORT: z.coerce.number().int().min(1).max(65535).default(3001),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -26,6 +31,7 @@ export function loadConfig(options: { root?: string; env?: NodeJS.ProcessEnv } =
     const file = existsSync(path) ? parseEnv(readFileSync(path, 'utf8')) : {};
     const parsed = ConfigSchema.safeParse({
       DB_PATH: env['DB_PATH'] ?? file['DB_PATH'] ?? './data/foodops.sqlite',
+      MCP_CONFIRM_SECRET: (env['MCP_CONFIRM_SECRET'] ?? file['MCP_CONFIRM_SECRET']) || undefined,
       MCP_AUTH_TOKEN: (env['MCP_AUTH_TOKEN'] ?? file['MCP_AUTH_TOKEN']) || undefined,
       PORT: env['PORT'] ?? env['MCP_PORT'] ?? file['PORT'] ?? file['MCP_PORT'],
       LOG_LEVEL: env['LOG_LEVEL'] ?? file['LOG_LEVEL'],

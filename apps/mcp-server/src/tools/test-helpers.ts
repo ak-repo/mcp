@@ -1,3 +1,4 @@
+import { createConfirmationGate } from '../lib/confirmation.js';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,7 +30,11 @@ export async function fixture(): Promise<Fixture> {
   seedDatabase(write);
   const read = openReadOnly(write.name);
   const services = createServices({ write, read });
-  const server = createServer({ services, logger: createLogger('silent') });
+  const server = createServer({
+    services,
+    confirmation: createConfirmationGate(),
+    logger: createLogger('silent'),
+  });
   const client = new Client({ name: 'foodops-phase2b-test', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
