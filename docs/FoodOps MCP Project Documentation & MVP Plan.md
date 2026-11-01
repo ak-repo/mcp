@@ -154,7 +154,7 @@ All rules live in `packages/core`. Neither MCP nor REST may bypass them.
 - Protocol version negotiated by the SDK; SDK version pinned in `package.json`.
 - Graceful shutdown on SIGTERM: stop accepting requests, finish in-flight calls, close DB.
 - Bearer token required on HTTP (`MCP_AUTH_TOKEN`). stdio is trusted (local process).
-- Per-call timeout of 5 s; result size capped (see 7.5).
+- Read calls have a 5 s deadline; writes already started are awaited and return their real result even after that deadline. Result size is capped (see 7.5).
 
 ### 7.2 Tools
 
@@ -205,7 +205,7 @@ Tokens use HMAC-SHA256 and expire after five minutes. They bind the tool, normal
 - Service errors map to MCP tool results with `isError: true` and a message in the form `CODE: explanation. Hint: next step`, so the model can self-correct.
 - Pagination everywhere; any result over \~20 KB is truncated with `truncated: true` and a hint to narrow filters.
 - No tool accepts raw SQL. No tool returns columns outside its DTO.
-- Every call is logged to `tool_call_log` (tool, args, status, latency, actor).
+- Every call attempts persistence to `tool_call_log` (tool, redacted args, status, latency, actor). Audit persistence is best-effort: failures are logged to stderr and preserve the real tool outcome.
 
 ## 8. REST + SSE API (apps/api)
 

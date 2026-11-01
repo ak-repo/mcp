@@ -22,7 +22,7 @@ export function policyText(): string {
     'All write tools return successful previews without a confirmation_token and change no business records. Show the preview to the user and obtain explicit approval before executing with its token.',
     'Paid cancellation and large-refund previews are successful. CONFIRMATION_REQUIRED applies only to execution with a missing, invalid, expired, or stale token.',
     'Tokens expire after five minutes and bind the exact request and preview. Execution checks that preview transactionally. The host must enforce human approval; possession of a token does not prove approval. Use an idempotency_key for safe replay.',
-    'Every tool call, including a preview, writes an audit record.',
+    'Every tool call, including a preview, attempts an audit record; persistence failures are logged to stderr and preserve the operation result.',
   ].join('\n');
 }
 export function registerPolicyResource(server: McpServer): void {

@@ -90,6 +90,7 @@ export function defineTool<I extends z.ZodType, O extends z.ZodType>(spec: {
       openWorldHint: false,
     },
     async run(args, extra, dependencies) {
+      const readOnly = spec.annotations?.readOnlyHint !== false;
       const start = performance.now();
       const deadline = start + TOOL_TIMEOUT_MS;
       let errorCode: ErrorCode | null = null;
@@ -113,8 +114,8 @@ export function defineTool<I extends z.ZodType, O extends z.ZodType>(spec: {
             controller.signal,
             dependencies.confirmation,
           );
-          if (performance.now() >= deadline) throw timeoutError();
-          if (controller.signal.aborted) throw cancelledError();
+          if (readOnly && performance.now() >= deadline) throw timeoutError();
+          if (readOnly && controller.signal.aborted) throw cancelledError();
           const output = spec.dataSchema.safeParse(value);
           if (!output.success) throw new Error('Service response does not match the tool schema');
           let response: CallToolResult = {
@@ -132,23 +133,25 @@ export function defineTool<I extends z.ZodType, O extends z.ZodType>(spec: {
               structuredContent: { data: null, truncated: true, hint: spec.hint },
             };
           outputSchema.parse(response.structuredContent);
-          if (performance.now() >= deadline) throw timeoutError();
+          if (readOnly && performance.now() >= deadline) throw timeoutError();
           return response;
         };
-        result = await Promise.race([
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => {
-              controller.abort();
-              reject(timeoutError());
-            }, TOOL_TIMEOUT_MS);
-            cancel = () => {
-              controller.abort();
-              reject(cancelledError());
-            };
-            extra.signal.addEventListener('abort', cancel, { once: true });
-          }),
-          work(),
-        ]);
+        result = readOnly
+          ? await Promise.race([
+              new Promise<never>((_, reject) => {
+                timer = setTimeout(() => {
+                  controller.abort();
+                  reject(timeoutError());
+                }, TOOL_TIMEOUT_MS);
+                cancel = () => {
+                  controller.abort();
+                  reject(cancelledError());
+                };
+                extra.signal.addEventListener('abort', cancel, { once: true });
+              }),
+              work(),
+            ])
+          : await work();
       } catch (error) {
         const failure = asAppError(error);
         errorCode = failure.code;
@@ -173,19 +176,23 @@ export function defineTool<I extends z.ZodType, O extends z.ZodType>(spec: {
           latencyMs: performance.now() - start,
           ...(extra.sessionId === undefined ? {} : { sessionId: extra.sessionId }),
         });
-        dependencies.logger.info(
-          {
-            tool: spec.name,
-            status: errorCode === null ? 'success' : 'error',
-            error_code: errorCode,
-            latency_ms: Math.round(performance.now() - start),
-          },
-          'Tool call completed',
-        );
       } catch {
         dependencies.logger.error({ tool: spec.name }, 'Tool audit persistence failed');
-        return mapToolError(new Error('Audit failed'));
       }
+      if (!readOnly && performance.now() >= deadline)
+        dependencies.logger.warn(
+          { tool: spec.name },
+          'Write exceeded tool deadline; preserving operation result',
+        );
+      dependencies.logger.info(
+        {
+          tool: spec.name,
+          status: errorCode === null ? 'success' : 'error',
+          error_code: errorCode,
+          latency_ms: Math.round(performance.now() - start),
+        },
+        'Tool call completed',
+      );
       return result;
     },
   };

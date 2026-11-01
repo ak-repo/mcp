@@ -234,14 +234,15 @@ describe('SDK read tools against seeded SQLite', () => {
       await client.callTool({ name: 'get_order', arguments: { order_id: 'x' } }),
     ).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^INTERNAL:/) }] });
   });
-  it('returns INTERNAL when audit persistence fails', async () => {
+  it('preserves the successful read when audit persistence fails', async () => {
     vi.spyOn(services.audit, 'recordCall').mockImplementation(() => {
       throw new Error('SECRET database failure');
     });
     const result = await client.callTool({ name: 'list_orders', arguments: { limit: 1 } });
-    expect(result).toMatchObject({
-      isError: true,
-      content: [{ text: expect.stringMatching(/^INTERNAL:/) }],
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      data: { items: [expect.any(Object)] },
+      truncated: false,
     });
     expect(JSON.stringify(result)).not.toContain('SECRET');
   });

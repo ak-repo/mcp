@@ -167,3 +167,86 @@ it('rejects undeclared output columns and logs INTERNAL', async () => {
   expect(JSON.stringify(result)).not.toContain('secret');
   expect(dependencies.services.audit.listCalls().items[0]!.error_code).toBe('INTERNAL');
 });
+function writeTool(execute: () => unknown | Promise<unknown>) {
+  return defineTool({
+    name: 'test_write',
+    description: 'Persist an approved operation',
+    inputSchema: z.strictObject({}),
+    dataSchema: z.strictObject({ value: z.string() }),
+    annotations: { readOnlyHint: false },
+    execute,
+    summarize: () => 'Committed.',
+    hint: 'Retry using the original idempotency key.',
+  });
+}
+function commit(): { value: string } {
+  const result = dependencies.services.order.advanceStatus({
+    orderId: 'O-EDGE-UNASSIGNED',
+    toStatus: 'preparing',
+    actor: 'ai',
+    reason: 'Approved test',
+    idempotencyKey: 'reliable',
+  });
+  return { value: result.order.status };
+}
+it('returns a committed write result when audit persistence fails and logs the failure', async () => {
+  vi.spyOn(dependencies.services.audit, 'recordCall').mockImplementation(() => {
+    throw new Error('sensitive DB failure');
+  });
+  const log = vi.spyOn(dependencies.logger, 'error');
+  const result = await writeTool(commit).run({}, extra(new AbortController().signal), dependencies);
+  expect(result.isError).not.toBe(true);
+  expect(result.structuredContent).toEqual({ data: { value: 'preparing' }, truncated: false });
+  expect(dependencies.services.order.getOrder('O-EDGE-UNASSIGNED').order.status).toBe('preparing');
+  expect(log).toHaveBeenCalledWith({ tool: 'test_write' }, 'Tool audit persistence failed');
+});
+it('preserves successful reads and original errors when audit persistence fails', async () => {
+  vi.spyOn(dependencies.services.audit, 'recordCall').mockImplementation(() => {
+    throw new Error('DB failure');
+  });
+  const success = await makeTool(() => ({ value: 'read' })).run(
+    {},
+    extra(new AbortController().signal),
+    dependencies,
+  );
+  expect(success.isError).not.toBe(true);
+  const failure = await makeTool(() => {
+    throw new AppError(ErrorCode.NOT_FOUND, 'Missing', 'Check ID');
+  }).run({}, extra(new AbortController().signal), dependencies);
+  expect(failure).toMatchObject({
+    isError: true,
+    content: [{ text: expect.stringMatching(/^NOT_FOUND:/) }],
+  });
+});
+it('returns a synchronous write result after a post-commit deadline overrun', async () => {
+  vi.spyOn(performance, 'now').mockReturnValue(0);
+  const result = await writeTool(() => {
+    const result = commit();
+    vi.mocked(performance.now).mockReturnValue(6000);
+    return result;
+  }).run({}, extra(new AbortController().signal), dependencies);
+  expect(result.isError).not.toBe(true);
+  expect(dependencies.services.order.getOrder('O-EDGE-UNASSIGNED').order.status).toBe('preparing');
+});
+it('awaits slow writes and preserves committed results despite cancellation during execution', async () => {
+  vi.useFakeTimers();
+  const controller = new AbortController();
+  let settled = false;
+  const task = writeTool(async () => {
+    const result = commit();
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    return result;
+  })
+    .run({}, extra(controller.signal), dependencies)
+    .then((result) => {
+      settled = true;
+      return result;
+    });
+  await vi.advanceTimersByTimeAsync(5001);
+  controller.abort();
+  expect(settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(999);
+  expect((await task).isError).not.toBe(true);
+  expect(dependencies.services.order.getOrder('O-EDGE-UNASSIGNED').order.status).toBe('preparing');
+  expect(vi.getTimerCount()).toBe(0);
+});
