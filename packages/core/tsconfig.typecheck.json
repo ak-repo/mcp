@@ -1,7 +1,7 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": ".typecheck",
+    "outDir": "dist",
     "tsBuildInfoFile": ".typecheck/tsconfig.tsbuildinfo",
     "emitDeclarationOnly": true
   },
