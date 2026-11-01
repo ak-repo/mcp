@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": ".typecheck",
+    "tsBuildInfoFile": ".typecheck/tsconfig.tsbuildinfo",
+    "emitDeclarationOnly": true
+  },
+  "references": [
+    {
+      "path": "../../packages/core/tsconfig.typecheck.json"
+    }
+  ]
+}

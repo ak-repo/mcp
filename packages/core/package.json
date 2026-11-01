@@ -1,0 +1,30 @@
+{
+  "name": "@foodops/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0 <23"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b tsconfig.typecheck.json",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --config vitest.config.ts",
+    "seed": "tsx src/seed/seed.ts"
+  },
+  "dependencies": {
+    "@foodops/shared": "workspace:*",
+    "better-sqlite3": "13.0.3"
+  },
+  "devDependencies": {
+    "@faker-js/faker": "10.6.0",
+    "@types/better-sqlite3": "9.6.0"
+  }
+}
