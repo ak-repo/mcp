@@ -17,7 +17,8 @@
     "typecheck": "tsc -b tsconfig.typecheck.json",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --config vitest.config.ts",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx src/transports/stdio.ts",
+    "start:http": "node dist/transports/http.js"
   },
   "dependencies": {
     "@foodops/core": "workspace:*",
