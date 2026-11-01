@@ -70,3 +70,9 @@ export const OrderListFiltersSchema = PaginationSchema.extend({
   to: DateBoundarySchema.optional(),
 }).superRefine(validateDateRange);
 export type OrderListFilters = z.infer<typeof OrderListFiltersSchema>;
+
+/** Extended search contract; preserves the existing MCP list_orders filter surface. */
+export const OrderSearchFiltersSchema = OrderListFiltersSchema.safeExtend({
+  q: TextSchema.optional(),
+});
+export type OrderSearchFilters = z.infer<typeof OrderSearchFiltersSchema>;

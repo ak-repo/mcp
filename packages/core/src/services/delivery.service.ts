@@ -3,6 +3,7 @@ import {
   DeliveryPartnerSchema,
   DeliverySchema,
   DeliveryTrackingSchema,
+  DeliveryListFiltersSchema,
   ErrorCode,
   PartnerListFiltersSchema,
   type Delivery,
@@ -24,7 +25,12 @@ import {
   type Repositories,
   type ServiceContext,
 } from './context.js';
-import type { PartnerListInput, ReassignInput, ReassignResult } from './types.js';
+import type {
+  DeliveryListInput,
+  PartnerListInput,
+  ReassignInput,
+  ReassignResult,
+} from './types.js';
 
 function reassignPlan(repos: Repositories, input: ReassignInput) {
   const order = required(repos.order.get(input.orderId), 'Order');
@@ -142,7 +148,27 @@ function reassignPreview(repos: Repositories, input: ReassignInput) {
     delivery_status_after: 'assigned',
     refund_amount_paise: 0,
     requiresConfirmation: false,
-  };
+  } as const;
+}
+function tracking(repos: Repositories, order: Order, at: string) {
+  const delivery = singleton(repos.delivery.forOrder(order.id), 'delivery');
+  const partner = delivery?.partner_id
+    ? required(repos.delivery.partner(delivery.partner_id), 'Partner')
+    : null;
+  const late =
+    delivery !== null &&
+    !['delivered', 'cancelled'].includes(delivery.status) &&
+    order.status !== 'cancelled' &&
+    delivery.assigned_at !== null &&
+    delivery.eta_min !== null &&
+    Date.parse(at) > Date.parse(delivery.assigned_at) + delivery.eta_min * 60000;
+  return DeliveryTrackingSchema.parse({
+    order_id: order.id,
+    order_status: order.status,
+    delivery,
+    partner,
+    is_late: late,
+  });
 }
 export function createDeliveryService(context: ServiceContext) {
   const validate = (input: ReassignInput) => {
@@ -155,24 +181,31 @@ export function createDeliveryService(context: ServiceContext) {
       id(orderId);
       return context.read((repos) => {
         const order = required(repos.order.get(orderId), 'Order');
-        const delivery = singleton(repos.delivery.forOrder(orderId), 'delivery');
-        const partner = delivery?.partner_id
-          ? required(repos.delivery.partner(delivery.partner_id), 'Partner')
-          : null;
-        const late =
-          delivery !== null &&
-          !['delivered', 'cancelled'].includes(delivery.status) &&
-          order.status !== 'cancelled' &&
-          delivery.assigned_at !== null &&
-          delivery.eta_min !== null &&
-          Date.parse(now()) > Date.parse(delivery.assigned_at) + delivery.eta_min * 60000;
-        return DeliveryTrackingSchema.parse({
-          order_id: orderId,
-          order_status: order.status,
-          delivery,
-          partner,
-          is_late: late,
-        });
+        return tracking(repos, order, now());
+      });
+    },
+    listDeliveries(input: DeliveryListInput = {}) {
+      keys(input, ['status', 'partnerId', 'cursor', 'limit']);
+      const filters = parse(
+        DeliveryListFiltersSchema,
+        {
+          status: input.status,
+          partner_id: input.partnerId,
+          cursor: input.cursor,
+          limit: input.limit,
+        },
+        'delivery filters',
+      );
+      return context.read((repos) => {
+        const page = repos.delivery.activeOrders(filters);
+        const at = now();
+        return {
+          items: page.items.map((order) => {
+            const result = tracking(repos, order, at);
+            return { ...result, delivery: required(result.delivery, 'Delivery') };
+          }),
+          next_cursor: page.next_cursor,
+        };
       });
     },
     listDeliveryPartners(input: PartnerListInput = {}) {

@@ -3,7 +3,7 @@ import {
   IdempotencyKeySchema,
   ToolCallLogSchema,
   type IdempotencyKey,
-  type Pagination,
+  type ToolCallListFilters,
   type ToolCallLog,
 } from '@foodops/shared';
 import type { DatabaseConnection } from '../db/connection.js';
@@ -39,14 +39,19 @@ export function createAuditRepository(db: DatabaseConnection) {
         r.at,
       );
     },
-    list(filters: Pagination) {
+    list(filters: ToolCallListFilters) {
       const cursor = filters.cursor ? decodeCursor(filters.cursor) : null;
       return page(
         many(
           db,
           `SELECT id, session_id, tool, args_json, status, error_code, latency_ms, actor, at FROM tool_call_log
-        WHERE (? IS NULL OR at < ? OR (at = ? AND id < ?)) ORDER BY at DESC, id DESC LIMIT ?`,
+        WHERE (? IS NULL OR tool = ?) AND (? IS NULL OR status = ?)
+          AND (? IS NULL OR at < ? OR (at = ? AND id < ?)) ORDER BY at DESC, id DESC LIMIT ?`,
           [
+            filters.tool ?? null,
+            filters.tool ?? null,
+            filters.status ?? null,
+            filters.status ?? null,
             cursor?.placed_at ?? null,
             cursor?.placed_at ?? null,
             cursor?.placed_at ?? null,

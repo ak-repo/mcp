@@ -29,9 +29,13 @@ export default fp<{ origins: readonly string[] }>(
           .split(',')
           .some(
             (header) =>
-              !['authorization', 'content-type', 'x-request-id', 'x-run-id'].includes(
-                header.trim().toLowerCase(),
-              ),
+              ![
+                'authorization',
+                'content-type',
+                'x-request-id',
+                'x-run-id',
+                'idempotency-key',
+              ].includes(header.trim().toLowerCase()),
           )
       )
         throw new HttpError(
@@ -57,8 +61,14 @@ export default fp<{ origins: readonly string[] }>(
         );
       },
       credentials: false,
-      allowedHeaders: ['Authorization', 'Content-Type', 'X-Request-Id', 'X-Run-Id'],
-      exposedHeaders: ['X-Request-Id'],
+      allowedHeaders: [
+        'Authorization',
+        'Content-Type',
+        'X-Request-Id',
+        'X-Run-Id',
+        'Idempotency-Key',
+      ],
+      exposedHeaders: ['X-Request-Id', 'Idempotency-Replayed'],
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       strictPreflight: true,
     });

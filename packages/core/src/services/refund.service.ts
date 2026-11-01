@@ -121,7 +121,7 @@ function refundPreview(repos: Repositories, input: RefundInput) {
     payment_status_after:
       input.amountPaise === balance.remaining ? 'refunded' : 'partially_refunded',
     requiresConfirmation: requiresRefundConfirmation(input.amountPaise),
-  };
+  } as const;
 }
 export function createRefundService(context: ServiceContext) {
   const validate = (input: RefundInput) => {

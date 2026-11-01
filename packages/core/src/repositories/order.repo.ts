@@ -5,7 +5,7 @@ import {
   OrderSchema,
   type Order,
   type OrderEvent,
-  type OrderListFilters,
+  type OrderSearchFilters,
 } from '@foodops/shared';
 import type { DatabaseConnection } from '../db/connection.js';
 import { dateBounds, many, one, page } from './common.js';
@@ -30,7 +30,7 @@ export function createOrderRepository(db: DatabaseConnection) {
         [id],
         OrderEventSchema,
       ),
-    list(filters: OrderListFilters) {
+    list(filters: OrderSearchFilters) {
       const cursor = filters.cursor ? decodeCursor(filters.cursor) : null;
       const bounds = dateBounds(filters.from, filters.to);
       return page(
@@ -39,6 +39,9 @@ export function createOrderRepository(db: DatabaseConnection) {
           `SELECT ${ORDER_COLUMNS} FROM orders
         WHERE (? IS NULL OR status = ?) AND (? IS NULL OR customer_id = ?) AND (? IS NULL OR restaurant_id = ?)
           AND (? IS NULL OR julianday(placed_at) >= julianday(?)) AND (? IS NULL OR ${bounds.exclusive ? 'julianday(placed_at) < julianday(?)' : 'julianday(placed_at) <= julianday(?)'})
+          AND (? IS NULL OR instr(lower(id), lower(?)) > 0 OR instr(lower(coalesce(notes, '')), lower(?)) > 0
+            OR EXISTS (SELECT 1 FROM customers c WHERE c.id = orders.customer_id AND instr(lower(c.name), lower(?)) > 0)
+            OR EXISTS (SELECT 1 FROM restaurants r WHERE r.id = orders.restaurant_id AND instr(lower(r.name), lower(?)) > 0))
           AND (? IS NULL OR placed_at < ? OR (placed_at = ? AND id < ?))
         ORDER BY placed_at DESC, id DESC LIMIT ?`,
           [
@@ -52,6 +55,11 @@ export function createOrderRepository(db: DatabaseConnection) {
             bounds.from,
             bounds.to,
             bounds.to,
+            filters.q ?? null,
+            filters.q ?? null,
+            filters.q ?? null,
+            filters.q ?? null,
+            filters.q ?? null,
             cursor?.placed_at ?? null,
             cursor?.placed_at ?? null,
             cursor?.placed_at ?? null,

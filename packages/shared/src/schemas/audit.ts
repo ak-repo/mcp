@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PaginationSchema } from './pagination.js';
 import { ErrorCode } from '../errors.js';
 import { ActorSchema, IdSchema, JsonTextSchema, TextSchema, TimestampSchema } from './common.js';
 
@@ -26,3 +27,9 @@ export const IdempotencyKeySchema = z.strictObject({
   created_at: TimestampSchema,
 });
 export type IdempotencyKey = z.infer<typeof IdempotencyKeySchema>;
+
+export const ToolCallListFiltersSchema = PaginationSchema.extend({
+  tool: TextSchema.optional(),
+  status: ToolCallStatusSchema.optional(),
+});
+export type ToolCallListFilters = z.infer<typeof ToolCallListFiltersSchema>;

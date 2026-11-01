@@ -14,6 +14,8 @@ import type {
   Refund,
   SalesGroupBy,
   ToolCallLog,
+  ToolCallStatus,
+  DeliveryStatus,
 } from '@foodops/shared';
 import type { WriteMeta } from './context.js';
 export interface PaginationInput {
@@ -21,6 +23,7 @@ export interface PaginationInput {
   limit?: number;
 }
 export interface OrderListInput extends PaginationInput {
+  query?: string;
   status?: OrderStatus;
   customerId?: string;
   restaurantId?: string;
@@ -98,3 +101,12 @@ export type AuditInput = Omit<
   argsJson: string;
   idempotencyKey?: string;
 };
+
+export interface DeliveryListInput extends PaginationInput {
+  status?: DeliveryStatus;
+  partnerId?: string;
+}
+export interface AuditListInput extends PaginationInput {
+  tool?: string;
+  status?: ToolCallStatus;
+}

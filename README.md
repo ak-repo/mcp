@@ -1,6 +1,6 @@
 # FoodOps MCP
 
-Seeded food-order, delivery, refund, and invoice operations exposed through Model Context Protocol. Node.js 22, strict TypeScript, pnpm, SQLite, Zod, and the pinned MCP SDK. The current applications are the MCP backend and the dashboard API foundation (health probes only).
+Seeded food-order, delivery, refund, and invoice operations exposed through Model Context Protocol. Node.js 22, strict TypeScript, pnpm, SQLite, Zod, and the pinned MCP SDK. The current applications are the MCP backend and the dashboard REST API.
 
 From the workspace root, with Node 22 and pnpm 10 active:
 
@@ -47,7 +47,7 @@ Choose stdio or HTTP through its entrypoint. Preview write tools without a token
 
 ## Dashboard API foundation
 
-Set a separate `ADMIN_TOKEN` in `.env` (32+ characters, no whitespace), then run `pnpm dev:api`, or `pnpm build` followed by `pnpm start:api`. Public probes: `GET /api/health` for liveness and `GET /api/ready` for a core DB read. Other requests require bearer authentication; domain routes are deferred. See the [API guide](apps/api/README.md) for security, error contracts, and lifecycle ownership.
+Set a separate `ADMIN_TOKEN` in `.env` (32+ characters, no whitespace), then run `pnpm dev:api`, or `pnpm build` followed by `pnpm start:api`. Public probes: `GET /api/health` for liveness and `GET /api/ready` for a core DB read. Domain routes require bearer authentication; operator writes require explicit confirmation and an idempotency key. See the [REST endpoint reference](docs/api.md). See the [API guide](apps/api/README.md) for security, error contracts, and lifecycle ownership.
 
 | Variable             | Default                 | Meaning                                                                                                   |
 | -------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------- |

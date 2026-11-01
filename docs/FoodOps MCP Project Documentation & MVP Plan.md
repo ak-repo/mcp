@@ -225,9 +225,11 @@ Tokens use HMAC-SHA256 and expire after five minutes. They bind the tool, normal
 
 ## 8. REST + SSE API (apps/api)
 
-**Implemented foundation:** only the two probes below exist. Domain routes, SSE, simulator, MCP client, and agent/LLM integration remain planned. API imports core/shared directly; core has no HTTP knowledge and never imports an application.
+**Implemented REST:** catalog, orders, invoices, active deliveries, delivery partners, metrics, audit calls, health probes, and four preview/execute operation pairs are implemented. SSE, simulator, MCP client, MCP tool catalog, and agent/LLM integration remain planned. API imports core/shared directly; core has no HTTP knowledge and never imports an application.
 
 Auth: `Authorization: Bearer <ADMIN_TOKEN>` on everything except exact `GET /api/health`, `GET /api/ready`, and valid CORS preflights. Tokens require 32+ characters without whitespace; compare SHA-256 digests in constant time and reject duplicate Authorization fields. Errors use `{ error: { code, message, hint } }`; shared codes map to their documented HTTP statuses, with API-only `UNAUTHORIZED` (401) and `FORBIDDEN` (403). Internal failures are sanitized and logged only server-side.
+
+The [complete REST reference](api.md) defines all implemented paths, strict query/body schemas, presented money DTOs, pagination, and errors. Operator writes use server-side actor `ops`, body `confirm: true`, and an `Idempotency-Key` header. Previews use distinct `/preview` paths and never write. REST previews are advisory; MCP's signed-token protocol remains separate. Detectable replays return `Idempotency-Replayed: true`. Orders support `q` across ID, customer/restaurant name, and notes; active deliveries include pending unassigned work. Audit reads support exact tool/status filters.
 
 Foundation configuration (process environment overrides workspace `.env`):
 

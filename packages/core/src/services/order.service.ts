@@ -3,7 +3,7 @@ import {
   DeliveryPartnerSchema,
   InvoiceSchema,
   OrderEventSchema,
-  OrderListFiltersSchema,
+  OrderSearchFiltersSchema,
   OrderSchema,
   PaymentSchema,
   RefundSchema,
@@ -72,7 +72,7 @@ function cancellationPreview(repos: Repositories, input: OrderWriteInput) {
     requiresConfirmation: requiresRefundConfirmation(amount),
     requiresPaymentConfirmation:
       payment !== null && CAPTURED_PAYMENT_STATUSES.includes(payment.status),
-  };
+  } as const;
 }
 function validateAdvance(input: AdvanceInput): void {
   writeInput(input, ['orderId', 'toStatus']);
@@ -156,7 +156,7 @@ function advancePreview(repos: Repositories, input: AdvanceInput) {
       cancellation?.payment_status_after ?? paymentFor(repos, order)?.status ?? null,
     requiresConfirmation: cancellation?.requiresConfirmation ?? false,
     requiresPaymentConfirmation: cancellation?.requiresPaymentConfirmation ?? false,
-  };
+  } as const;
 }
 export function createOrderService(context: ServiceContext) {
   const validateCancel = (input: OrderWriteInput) => {
@@ -184,11 +184,21 @@ export function createOrderService(context: ServiceContext) {
       });
     },
     listOrders(input: OrderListInput = {}) {
-      keys(input, ['status', 'customerId', 'restaurantId', 'from', 'to', 'cursor', 'limit']);
+      keys(input, [
+        'status',
+        'customerId',
+        'restaurantId',
+        'from',
+        'to',
+        'cursor',
+        'limit',
+        'query',
+      ]);
       const filters = parse(
-        OrderListFiltersSchema,
+        OrderSearchFiltersSchema,
         {
           status: input.status,
+          q: input.query,
           customer_id: input.customerId,
           restaurant_id: input.restaurantId,
           from: input.from,

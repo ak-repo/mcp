@@ -1,6 +1,6 @@
-import { PaginationSchema, ToolCallLogSchema } from '@foodops/shared';
+import { ToolCallListFiltersSchema, ToolCallLogSchema } from '@foodops/shared';
 import { keys, newId, now, parse, type ServiceContext } from './context.js';
-import type { AuditInput, PaginationInput } from './types.js';
+import type { AuditInput, AuditListInput } from './types.js';
 export function createAuditService(context: ServiceContext) {
   return {
     recordCall(input: AuditInput) {
@@ -44,9 +44,9 @@ export function createAuditService(context: ServiceContext) {
         (value) => ToolCallLogSchema.parse(value),
       );
     },
-    listCalls(input: PaginationInput = {}) {
-      keys(input, ['cursor', 'limit']);
-      const filters = parse(PaginationSchema, input, 'audit filters');
+    listCalls(input: AuditListInput = {}) {
+      keys(input, ['cursor', 'limit', 'tool', 'status']);
+      const filters = parse(ToolCallListFiltersSchema, input, 'audit filters');
       return context.read((repos) => repos.audit.list(filters));
     },
   };

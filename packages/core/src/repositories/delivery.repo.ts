@@ -1,17 +1,51 @@
 import {
   DeliveryPartnerSchema,
   DeliverySchema,
+  OrderSchema,
+  decodeCursor,
+  type DeliveryListFilters,
   type Delivery,
   type DeliveryPartner,
   type PartnerListFilters,
 } from '@foodops/shared';
 import type { DatabaseConnection } from '../db/connection.js';
+import { ORDER_COLUMNS } from './order.repo.js';
 import { idCursor, many, one, page } from './common.js';
 export const DELIVERY_COLUMNS =
   'id, order_id, partner_id, status, eta_min, assigned_at, picked_up_at, delivered_at';
 const partnerColumns = 'id, name, phone, vehicle, status';
 export function createDeliveryRepository(db: DatabaseConnection) {
   return {
+    activeOrders(filters: DeliveryListFilters) {
+      const cursor = filters.cursor ? decodeCursor(filters.cursor) : null;
+      return page(
+        many(
+          db,
+          `SELECT ${ORDER_COLUMNS.split(', ')
+            .map((column) => `o.${column}`)
+            .join(', ')}
+        FROM orders o JOIN deliveries d ON d.order_id = o.id
+        WHERE o.status NOT IN ('delivered', 'cancelled') AND d.status NOT IN ('delivered', 'cancelled')
+          AND (? IS NULL OR d.status = ?) AND (? IS NULL OR d.partner_id = ?)
+          AND (? IS NULL OR o.placed_at < ? OR (o.placed_at = ? AND o.id < ?))
+        ORDER BY o.placed_at DESC, o.id DESC LIMIT ?`,
+          [
+            filters.status ?? null,
+            filters.status ?? null,
+            filters.partner_id ?? null,
+            filters.partner_id ?? null,
+            cursor?.placed_at ?? null,
+            cursor?.placed_at ?? null,
+            cursor?.placed_at ?? null,
+            cursor?.id ?? null,
+            filters.limit + 1,
+          ],
+          OrderSchema,
+        ),
+        filters.limit,
+        (row) => row.placed_at,
+      );
+    },
     forOrder: (id: string) =>
       many(
         db,
