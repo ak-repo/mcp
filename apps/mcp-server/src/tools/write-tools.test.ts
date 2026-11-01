@@ -264,3 +264,51 @@ it('returns injection text as inert data', async () => {
   });
   expect(f.businessHash()).toBe(before);
 });
+it('paid-cancellation previews always succeed, including the large-refund boundary', async () => {
+  const args = request('cancel_order');
+  for (const amount of [200000, 200001]) {
+    f.write
+      .prepare('UPDATE payments SET amount_paise=? WHERE order_id=?')
+      .run(amount, args['order_id']);
+    const before = f.businessHash();
+    const approval = await preview('cancel_order', args);
+    expect(approval.preview['refund_amount_paise']).toBe(amount);
+    expect(f.businessHash()).toBe(before);
+  }
+});
+it('large standalone refunds preview successfully and execute only with a token', async () => {
+  // Dedicated historical payment fixture; invoice values are left immutable.
+  const id = 'O-LARGE-REFUND';
+  f.write
+    .prepare(
+      `INSERT INTO orders SELECT ?, customer_id, restaurant_id, address_id, 'delivered', 400000, 20000, 0, 0, 0, 420000, NULL, NULL, placed_at, updated_at FROM orders WHERE id='O-EDGE-PARTIAL-REFUND'`,
+    )
+    .run(id);
+  f.write
+    .prepare("INSERT INTO payments VALUES ('P-LARGE', ?, 'upi', 'paid', 420000, NULL)")
+    .run(id);
+  f.write
+    .prepare(
+      "INSERT INTO order_items SELECT 'OI-LARGE', ?, menu_item_id, name_snapshot, 400000, 1 FROM order_items WHERE order_id='O-EDGE-PARTIAL-REFUND' LIMIT 1",
+    )
+    .run(id);
+  f.write
+    .prepare(
+      "INSERT INTO invoices SELECT 'I-LARGE', ?, 'INV-20261001-9999', 400000, 20000, 0, 0, 420000, issued_at FROM invoices WHERE order_id='O-EDGE-PARTIAL-REFUND'",
+    )
+    .run(id);
+  const before = f.businessHash();
+  for (const amount_paise of [200000, 200001]) {
+    const args = { order_id: id, amount_paise, reason: 'Reviewed amount' };
+    const approval = await preview('issue_refund', args);
+    expect(approval.preview['requiresConfirmation']).toBe(amount_paise > 200000);
+    expect(f.businessHash()).toBe(before);
+  }
+  const args = { order_id: id, amount_paise: 200001, reason: 'Reviewed amount' };
+  const approval = await preview('issue_refund', args);
+  expect(
+    (await f.call('issue_refund', { ...args, confirmation_token: approval.confirmation_token }))
+      .isError,
+  ).not.toBe(true);
+  expect(f.services.order.getOrder(id).payment?.status).toBe('partially_refunded');
+});

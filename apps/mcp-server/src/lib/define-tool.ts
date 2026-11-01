@@ -56,7 +56,6 @@ export function defineTool<I extends z.ZodType, O extends z.ZodType>(spec: {
   dataSchema: O;
   hint: string;
   annotations?: ToolAnnotations;
-  resultError?: (data: z.output<O>) => AppError | undefined;
   execute: (
     input: z.output<I>,
     services: Services,
@@ -118,23 +117,16 @@ export function defineTool<I extends z.ZodType, O extends z.ZodType>(spec: {
           if (controller.signal.aborted) throw cancelledError();
           const output = spec.dataSchema.safeParse(value);
           if (!output.success) throw new Error('Service response does not match the tool schema');
-          const failure = spec.resultError?.(output.data);
-          if (failure) errorCode = failure.code;
           let response: CallToolResult = {
-            ...(failure ? { isError: true } : {}),
-            content: [
-              ...(failure ? mapToolError(failure).content : []),
-              { type: 'text', text: spec.summarize(output.data) },
-            ],
+            content: [{ type: 'text', text: spec.summarize(output.data) }],
             structuredContent: { data: output.data, truncated: false },
           };
           if (resultBytes(response) > MAX_RESULT_BYTES)
             response = {
-              ...(failure ? { isError: true } : {}),
               content: [
                 {
                   type: 'text',
-                  text: `${failure ? failure.toToolText() + ' ' : ''}Result truncated. ${spec.hint}`,
+                  text: `Result truncated. ${spec.hint}`,
                 },
               ],
               structuredContent: { data: null, truncated: true, hint: spec.hint },

@@ -1,7 +1,5 @@
 import { z } from 'zod';
 import {
-  AppError,
-  ErrorCode,
   IdSchema,
   TextSchema,
   PaiseSchema,
@@ -105,12 +103,5 @@ export function writeResultSchema<P extends z.ZodType, R extends z.ZodType>(prev
     }),
     z.strictObject({ requires_user_approval: z.literal(false), result }),
   ]);
-}
-export function approvalError(): AppError {
-  return new AppError(
-    ErrorCode.CONFIRMATION_REQUIRED,
-    'Explicit user approval is required',
-    'Review the preview, obtain user approval, then repeat the request with confirm:true',
-  );
 }
 export const writeAnnotations = { readOnlyHint: false, idempotentHint: true, openWorldHint: false };

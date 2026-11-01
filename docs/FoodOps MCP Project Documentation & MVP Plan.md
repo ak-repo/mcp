@@ -136,8 +136,8 @@ All rules live in `packages/core`. Neither MCP nor REST may bypass them.
 
 **Rules**
 
-- Cancellation allowed only before `picked_up`. If the payment was `paid`, a full refund record is created in the same transaction.
-- Refund: amount must be > 0 and ≤ (paid − already refunded). Refunds above **₹2,000** require explicit confirmation flag from a human-approved path. Order must be `delivered` or `cancelled` unless it is a cancellation refund.
+- Cancellation allowed only before `picked_up`. If the payment was `paid`, a remaining captured balance is refunded in the same transaction. A nonterminal delivery is cancelled, and its busy partner becomes available only if no other active delivery uses that partner.
+- Refund: amount must be > 0 and ≤ (paid − already refunded). Refunds above **₹2,000** require explicit approval through a human-approved path; MCP execution uses the signed preview token described in section 7.2. Order must be `delivered` or `cancelled` unless it is a cancellation refund.
 - Reassign delivery: only before `picked_up`; target partner must be `available`; previous partner returns to `available`.
 - Every status change writes an `order_events` row with actor and reason.
 - Every write runs inside a single SQLite transaction. Write methods accept an optional `idempotency_key`; repeating a key returns the original result.
@@ -295,7 +295,7 @@ Environment variables (overridable from the Settings page, secrets kept server-s
 6. Every call emits `mcp.call` (tool, args, status, latency) for the activity panel and writes to `tool_call_log`.
 7. Rejected writes are returned to the model as a tool result stating the user declined.
 
-Approval is enforced twice: the UI gate (step 4) and the server-side `confirm` flag (section 7.2). The agent only sets `confirm: true` after approval.
+The host enforces human approval (step 4), then submits the server-issued confirmation token (section 7.2). The server validates preview integrity and freshness; possession of that token alone does not prove human approval.
 
 ## 11. Frontend Specification (apps/web)
 
@@ -356,7 +356,7 @@ Estimates assume one developer, about 13 working days.
 
 ### Phase 2: MCP server (2 days)
 
-- Register 12 tools, 3 resources, 3 prompts; error mapping; stdio and Streamable HTTP entrypoints; two-step `confirm` writes; `tool_call_log`.
+- Register 12 tools, 3 resources, 3 prompts; error mapping; stdio and Streamable HTTP entrypoints; two-step signed-preview token writes; `tool_call_log`.
 - **Done when:** every tool works in MCP Inspector; Claude Desktop can answer "what's the status of order X" and complete a confirmed cancellation; integration tests green.
 
 ### Phase 3: API, SSE, simulator (1.5 days)
@@ -401,7 +401,7 @@ Estimates assume one developer, about 13 working days.
 | Slow cold starts and low throughput locally | Long first-token timeout, concurrency 1, `keep_alive`, loading state in UI. |
 | Free-tier rate limits | Backoff, queue, clear UI messaging. |
 | SQLite writer contention between processes | WAL, busy timeout, short transactions, single write path via services. |
-| Prompt injection via DB text | Approval gate, server-side `confirm`, validation, data-wrapped tool results, seeded test. |
+| Prompt injection via DB text | Approval gate, signed preview tokens, host-enforced approval, validation, data-wrapped tool results, seeded test. |
 | MCP SDK or spec changes | Pin versions, contract snapshot test, thin adapter layer. |
 | Scope creep in the frontend | Fixed page list in section 11; anything else goes to a backlog. |
 
