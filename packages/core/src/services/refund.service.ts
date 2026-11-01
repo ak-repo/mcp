@@ -8,7 +8,12 @@ import {
   type Order,
   type Payment,
 } from '@foodops/shared';
-import { assertRefund, remainingRefund, requiresRefundConfirmation } from '../domain/policies.js';
+import {
+  assertRefund,
+  remainingRefund,
+  requiresRefundConfirmation,
+  CAPTURED_PAYMENT_STATUSES,
+} from '../domain/policies.js';
 import {
   id,
   newId,
@@ -46,7 +51,7 @@ export function refundBalance(
       'Reconcile payment and refund records before retrying',
     );
   const refunded = Number(total);
-  const captured = ['paid', 'partially_refunded', 'refunded'].includes(payment.status);
+  const captured = CAPTURED_PAYMENT_STATUSES.includes(payment.status);
   if (
     (!captured && refunded !== 0) ||
     (payment.status === 'refunded' && refunded !== payment.amount_paise)

@@ -12,7 +12,7 @@ import { decodeCursor, formatINR } from '@foodops/shared';
 import { createServer } from '../lib/create-server.js';
 import { createLogger } from '../lib/logger.js';
 import { MAX_RESULT_BYTES, resultBytes } from '../lib/define-tool.js';
-import { readTools } from './index.js';
+import { readTools, allTools } from './index.js';
 
 let directory: string;
 let write: DatabaseConnection;
@@ -67,12 +67,11 @@ afterEach(async () => {
 });
 
 describe('SDK read tools against seeded SQLite', () => {
-  it('discovers exactly eight strict tools with object output schemas and read annotations', async () => {
+  it('discovers twelve strict tools and preserves read annotations', async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name).sort()).toEqual(
-      readTools.map((tool) => tool.name).sort(),
-    );
-    for (const tool of tools) {
+    expect(tools.map((tool) => tool.name).sort()).toEqual(allTools.map((tool) => tool.name).sort());
+    expect(tools).toHaveLength(12);
+    for (const tool of tools.filter((item) => readTools.some((read) => read.name === item.name))) {
       expect(tool.inputSchema.type).toBe('object');
       expect(tool.inputSchema.additionalProperties).toBe(false);
       expect(tool.outputSchema?.type).toBe('object');

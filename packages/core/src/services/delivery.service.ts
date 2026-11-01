@@ -56,9 +56,11 @@ export function decodeReassign(value: unknown): ReassignResult {
     partner: DeliveryPartnerSchema.parse(row['partner']),
   };
 }
-export function advanceDelivery(repos: Repositories, order: Order, at: string): Delivery | null {
+/** Validate and project a delivery transition without persistence. */
+export function planDeliveryAdvance(repos: Repositories, order: Order, at: string) {
   const delivery = singleton(repos.delivery.forOrder(order.id), 'delivery');
-  if (!['picked_up', 'out_for_delivery', 'delivered'].includes(order.status)) return delivery;
+  if (!['picked_up', 'out_for_delivery', 'delivered'].includes(order.status))
+    return { delivery, changes: false, releasePartner: null };
   const current = required(delivery, 'Delivery');
   const partner = required(
     current.partner_id === null ? null : repos.delivery.partner(current.partner_id),
@@ -88,10 +90,18 @@ export function advanceDelivery(repos: Repositories, order: Order, at: string): 
     picked_up_at: order.status === 'picked_up' ? at : current.picked_up_at,
     delivered_at: order.status === 'delivered' ? at : current.delivered_at,
   });
-  repos.delivery.update(updated);
-  if (order.status === 'delivered')
-    repos.delivery.updatePartner({ ...partner, status: 'available' });
-  return updated;
+  return {
+    delivery: updated,
+    changes: true,
+    releasePartner: order.status === 'delivered' ? partner : null,
+  };
+}
+export function advanceDelivery(repos: Repositories, order: Order, at: string): Delivery | null {
+  const plan = planDeliveryAdvance(repos, order, at);
+  if (plan.changes && plan.delivery) repos.delivery.update(plan.delivery);
+  if (plan.releasePartner)
+    repos.delivery.updatePartner({ ...plan.releasePartner, status: 'available' });
+  return plan.delivery;
 }
 export function createDeliveryService(context: ServiceContext) {
   const validate = (input: ReassignInput) => {

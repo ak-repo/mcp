@@ -5,6 +5,7 @@ import {
   subtractPaise,
   type OrderStatus,
   type PartnerStatus,
+  type PaymentStatus,
 } from '@foodops/shared';
 
 function validMoney(value: number): number {
@@ -20,10 +21,25 @@ function validMoney(value: number): number {
 }
 
 export const LARGE_REFUND_PAISE = 200000;
-const beforePickup: readonly OrderStatus[] = ['placed', 'accepted', 'preparing', 'ready'];
+export const CANCELLATION_ALLOWED_STATUSES: readonly OrderStatus[] = Object.freeze([
+  'placed',
+  'accepted',
+  'preparing',
+  'ready',
+]);
+export const REFUND_ALLOWED_STATUSES: readonly OrderStatus[] = Object.freeze([
+  'delivered',
+  'cancelled',
+]);
+export const CAPTURED_PAYMENT_STATUSES: readonly PaymentStatus[] = Object.freeze([
+  'paid',
+  'partially_refunded',
+  'refunded',
+]);
+export const REASSIGNMENT_PARTNER_STATUS = 'available' as const;
 
 export function assertCancellation(status: OrderStatus): void {
-  if (!beforePickup.includes(status)) {
+  if (!CANCELLATION_ALLOWED_STATUSES.includes(status)) {
     throw new AppError(
       ErrorCode.INVALID_TRANSITION,
       `Cannot cancel an order in ${status}`,
@@ -57,7 +73,7 @@ export function assertRefund(
       'Refund must be greater than zero',
       'Supply a positive amount in paise',
     );
-  if (!cancellation && status !== 'delivered' && status !== 'cancelled') {
+  if (!cancellation && !REFUND_ALLOWED_STATUSES.includes(status)) {
     throw new AppError(
       ErrorCode.INVALID_TRANSITION,
       `Cannot refund an order in ${status}`,
@@ -77,7 +93,7 @@ export function requiresRefundConfirmation(amount: number): boolean {
 }
 export function assertReassignment(status: OrderStatus, partner: PartnerStatus): void {
   assertCancellation(status);
-  if (partner !== 'available') {
+  if (partner !== REASSIGNMENT_PARTNER_STATUS) {
     throw new AppError(
       ErrorCode.CONFLICT,
       `Target partner is ${partner}`,

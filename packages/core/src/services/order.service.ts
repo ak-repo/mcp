@@ -8,7 +8,11 @@ import {
   RefundSchema,
 } from '@foodops/shared';
 import { assertTransition } from '../domain/order-state-machine.js';
-import { assertCancellation, requiresRefundConfirmation } from '../domain/policies.js';
+import {
+  assertCancellation,
+  requiresRefundConfirmation,
+  CAPTURED_PAYMENT_STATUSES,
+} from '../domain/policies.js';
 import {
   id,
   keys,
@@ -24,8 +28,8 @@ import {
   type ServiceContext,
 } from './context.js';
 import { paymentFor, refundBalance, applyRefund } from './refund.service.js';
-import { issueInvoice } from './invoice.service.js';
-import { advanceDelivery } from './delivery.service.js';
+import { issueInvoice, planInvoice } from './invoice.service.js';
+import { advanceDelivery, planDeliveryAdvance } from './delivery.service.js';
 import type {
   AdvanceInput,
   OrderDetails,
@@ -39,9 +43,29 @@ function cancellationPlan(repos: Repositories, input: OrderWriteInput) {
   assertCancellation(order.status);
   const payment = paymentFor(repos, order);
   let amount = 0;
-  if (payment && (payment.status === 'paid' || payment.status === 'partially_refunded'))
+  if (payment && CAPTURED_PAYMENT_STATUSES.includes(payment.status))
     amount = refundBalance(repos, order, payment).remaining;
   return { order, payment, amount };
+}
+function cancellationPreview(repos: Repositories, input: OrderWriteInput) {
+  const { order, payment, amount } = cancellationPlan(repos, input);
+  return {
+    order_id: order.id,
+    from_status: order.status,
+    to_status: 'cancelled' as const,
+    cancel_reason: input.reason,
+    payment_id: payment?.id ?? null,
+    payment_status_after: amount > 0 ? ('refunded' as const) : (payment?.status ?? null),
+    refund_amount_paise: amount,
+    requiresConfirmation: requiresRefundConfirmation(amount),
+    requiresPaymentConfirmation:
+      payment !== null && CAPTURED_PAYMENT_STATUSES.includes(payment.status),
+  };
+}
+function validateAdvance(input: AdvanceInput): void {
+  writeInput(input, ['orderId', 'toStatus']);
+  id(input.orderId);
+  parse(OrderSchema.shape.status, input.toStatus, 'target status');
 }
 function cancel(repos: Repositories, input: OrderWriteInput): OrderMutationResult {
   const { order, payment, amount } = cancellationPlan(repos, input);
@@ -129,17 +153,39 @@ export function createOrderService(context: ServiceContext) {
     },
     previewCancel(input: OrderWriteInput) {
       validateCancel(input);
+      return context.read((repos) => cancellationPreview(repos, input));
+    },
+    previewAdvanceStatus(input: AdvanceInput) {
+      validateAdvance(input);
       return context.read((repos) => {
-        const { order, payment, amount } = cancellationPlan(repos, input);
+        const order = required(repos.order.get(input.orderId), 'Order');
+        assertTransition(order.status, input.toStatus);
+        const at = now();
+        const updated = OrderSchema.parse({ ...order, status: input.toStatus, updated_at: at });
+        const delivery =
+          input.toStatus === 'cancelled'
+            ? {
+                delivery: singleton(repos.delivery.forOrder(order.id), 'delivery'),
+                releasePartner: null,
+              }
+            : planDeliveryAdvance(repos, updated, at);
+        const cancellation =
+          input.toStatus === 'cancelled' ? cancellationPreview(repos, input) : null;
+        const invoice = input.toStatus === 'delivered' ? planInvoice(repos, updated, at) : null;
         return {
           order_id: order.id,
           from_status: order.status,
-          to_status: 'cancelled',
-          cancel_reason: input.reason,
-          payment_id: payment?.id ?? null,
-          payment_status_after: amount > 0 ? 'refunded' : (payment?.status ?? null),
-          refund_amount_paise: amount,
-          requiresConfirmation: requiresRefundConfirmation(amount),
+          to_status: input.toStatus,
+          reason: input.reason,
+          delivery_status_after: delivery.delivery?.status ?? null,
+          partner_id: delivery.delivery?.partner_id ?? null,
+          partner_status_after: delivery.releasePartner ? ('available' as const) : null,
+          invoice_will_be_issued: invoice !== null && invoice.existing === null,
+          refund_amount_paise: cancellation?.refund_amount_paise ?? 0,
+          payment_status_after:
+            cancellation?.payment_status_after ?? paymentFor(repos, order)?.status ?? null,
+          requiresConfirmation: cancellation?.requiresConfirmation ?? false,
+          requiresPaymentConfirmation: cancellation?.requiresPaymentConfirmation ?? false,
         };
       });
     },
@@ -153,9 +199,7 @@ export function createOrderService(context: ServiceContext) {
       );
     },
     advanceStatus(input: AdvanceInput) {
-      writeInput(input, ['orderId', 'toStatus']);
-      id(input.orderId);
-      parse(OrderSchema.shape.status, input.toStatus, 'target status');
+      validateAdvance(input);
       return context.mutate(
         'order.advanceStatus',
         input,

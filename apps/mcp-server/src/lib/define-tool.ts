@@ -5,6 +5,7 @@ import type {
   CallToolResult,
   ServerNotification,
   ServerRequest,
+  ToolAnnotations,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { Logger } from 'pino';
@@ -24,6 +25,7 @@ export interface ToolDefinition {
   description: string;
   inputSchema: z.ZodType;
   outputSchema: z.ZodObject;
+  annotations: ToolAnnotations;
   run: (args: unknown, extra: ToolExtra, dependencies: ToolDependencies) => Promise<CallToolResult>;
 }
 export function resultBytes(result: CallToolResult): number {
@@ -51,6 +53,8 @@ export function defineTool<I extends z.ZodType, O extends z.ZodType>(spec: {
   inputSchema: I;
   dataSchema: O;
   hint: string;
+  annotations?: ToolAnnotations;
+  resultError?: (data: z.output<O>) => AppError | undefined;
   execute: (
     input: z.output<I>,
     services: Services,
@@ -78,6 +82,11 @@ export function defineTool<I extends z.ZodType, O extends z.ZodType>(spec: {
     description: spec.description,
     inputSchema: spec.inputSchema,
     outputSchema,
+    annotations: spec.annotations ?? {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    },
     async run(args, extra, dependencies) {
       const start = performance.now();
       const deadline = start + TOOL_TIMEOUT_MS;
@@ -101,13 +110,25 @@ export function defineTool<I extends z.ZodType, O extends z.ZodType>(spec: {
           if (controller.signal.aborted) throw cancelledError();
           const output = spec.dataSchema.safeParse(value);
           if (!output.success) throw new Error('Service response does not match the tool schema');
+          const failure = spec.resultError?.(output.data);
+          if (failure) errorCode = failure.code;
           let response: CallToolResult = {
-            content: [{ type: 'text', text: spec.summarize(output.data) }],
+            ...(failure ? { isError: true } : {}),
+            content: [
+              ...(failure ? mapToolError(failure).content : []),
+              { type: 'text', text: spec.summarize(output.data) },
+            ],
             structuredContent: { data: output.data, truncated: false },
           };
           if (resultBytes(response) > MAX_RESULT_BYTES)
             response = {
-              content: [{ type: 'text', text: `Result truncated. ${spec.hint}` }],
+              ...(failure ? { isError: true } : {}),
+              content: [
+                {
+                  type: 'text',
+                  text: `${failure ? failure.toToolText() + ' ' : ''}Result truncated. ${spec.hint}`,
+                },
+              ],
               structuredContent: { data: null, truncated: true, hint: spec.hint },
             };
           outputSchema.parse(response.structuredContent);
