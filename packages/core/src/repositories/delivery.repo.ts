@@ -19,6 +19,13 @@ export function createDeliveryRepository(db: DatabaseConnection) {
         [id],
         DeliverySchema,
       ),
+    activeForPartner: (partnerId: string, excludingId: string) =>
+      many(
+        db,
+        `SELECT ${DELIVERY_COLUMNS} FROM deliveries WHERE partner_id = ? AND id <> ? AND status NOT IN ('delivered', 'cancelled')`,
+        [partnerId, excludingId],
+        DeliverySchema,
+      ),
     partner: (id: string) =>
       one(
         db,

@@ -56,6 +56,31 @@ export function decodeReassign(value: unknown): ReassignResult {
     partner: DeliveryPartnerSchema.parse(row['partner']),
   };
 }
+/** Project cancellation and release only resources owned exclusively by this delivery. */
+export function planDeliveryCancellation(repos: Repositories, orderId: string) {
+  const current = singleton(repos.delivery.forOrder(orderId), 'delivery');
+  const partner = current?.partner_id
+    ? required(repos.delivery.partner(current.partner_id), 'Assigned partner')
+    : null;
+  const changes = current !== null && !['delivered', 'cancelled'].includes(current.status);
+  const release =
+    changes &&
+    partner?.status === 'busy' &&
+    repos.delivery.activeForPartner(partner.id, current.id).length === 0;
+  return {
+    delivery: changes ? DeliverySchema.parse({ ...current, status: 'cancelled' }) : current,
+    partner: release ? DeliveryPartnerSchema.parse({ ...partner, status: 'available' }) : partner,
+    changes,
+    release,
+  };
+}
+export function cancelDelivery(repos: Repositories, orderId: string) {
+  const plan = planDeliveryCancellation(repos, orderId);
+  if (plan.changes && plan.delivery) repos.delivery.update(plan.delivery);
+  if (plan.release && plan.partner) repos.delivery.updatePartner(plan.partner);
+  return plan;
+}
+
 /** Validate and project a delivery transition without persistence. */
 export function planDeliveryAdvance(repos: Repositories, order: Order, at: string) {
   const delivery = singleton(repos.delivery.forOrder(order.id), 'delivery');

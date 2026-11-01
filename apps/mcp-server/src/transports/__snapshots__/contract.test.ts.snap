@@ -707,6 +707,54 @@ exports[`matches the complete tools, resources, templates, and prompts contract 
                               ],
                               "type": "object",
                             },
+                            "partner": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "id": {
+                                      "minLength": 1,
+                                      "pattern": "\\S",
+                                      "type": "string",
+                                    },
+                                    "name": {
+                                      "minLength": 1,
+                                      "pattern": "\\S",
+                                      "type": "string",
+                                    },
+                                    "phone": {
+                                      "minLength": 1,
+                                      "pattern": "\\S",
+                                      "type": "string",
+                                    },
+                                    "status": {
+                                      "enum": [
+                                        "available",
+                                        "busy",
+                                        "offline",
+                                      ],
+                                      "type": "string",
+                                    },
+                                    "vehicle": {
+                                      "minLength": 1,
+                                      "pattern": "\\S",
+                                      "type": "string",
+                                    },
+                                  },
+                                  "required": [
+                                    "id",
+                                    "name",
+                                    "phone",
+                                    "vehicle",
+                                    "status",
+                                  ],
+                                  "type": "object",
+                                },
+                                {
+                                  "type": "null",
+                                },
+                              ],
+                            },
                             "payment": {
                               "anyOf": [
                                 {
@@ -860,6 +908,7 @@ exports[`matches the complete tools, resources, templates, and prompts contract 
                             },
                           },
                           "required": [
+                            "partner",
                             "order",
                             "event",
                             "payment",
@@ -964,6 +1013,24 @@ exports[`matches the complete tools, resources, templates, and prompts contract 
                               "pattern": "\\S",
                               "type": "string",
                             },
+                            "delivery_status_after": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "pending",
+                                    "assigned",
+                                    "picked_up",
+                                    "out_for_delivery",
+                                    "delivered",
+                                    "cancelled",
+                                  ],
+                                  "type": "string",
+                                },
+                                {
+                                  "type": "null",
+                                },
+                              ],
+                            },
                             "from_status": {
                               "enum": [
                                 "placed",
@@ -981,6 +1048,33 @@ exports[`matches the complete tools, resources, templates, and prompts contract 
                               "minLength": 1,
                               "pattern": "\\S",
                               "type": "string",
+                            },
+                            "partner_id": {
+                              "anyOf": [
+                                {
+                                  "minLength": 1,
+                                  "pattern": "\\S",
+                                  "type": "string",
+                                },
+                                {
+                                  "type": "null",
+                                },
+                              ],
+                            },
+                            "partner_status_after": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "available",
+                                    "busy",
+                                    "offline",
+                                  ],
+                                  "type": "string",
+                                },
+                                {
+                                  "type": "null",
+                                },
+                              ],
                             },
                             "payment_id": {
                               "anyOf": [
@@ -1033,6 +1127,9 @@ exports[`matches the complete tools, resources, templates, and prompts contract 
                             },
                           },
                           "required": [
+                            "delivery_status_after",
+                            "partner_id",
+                            "partner_status_after",
                             "order_id",
                             "from_status",
                             "to_status",
@@ -1480,6 +1577,54 @@ exports[`matches the complete tools, resources, templates, and prompts contract 
                               ],
                               "type": "object",
                             },
+                            "partner": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "id": {
+                                      "minLength": 1,
+                                      "pattern": "\\S",
+                                      "type": "string",
+                                    },
+                                    "name": {
+                                      "minLength": 1,
+                                      "pattern": "\\S",
+                                      "type": "string",
+                                    },
+                                    "phone": {
+                                      "minLength": 1,
+                                      "pattern": "\\S",
+                                      "type": "string",
+                                    },
+                                    "status": {
+                                      "enum": [
+                                        "available",
+                                        "busy",
+                                        "offline",
+                                      ],
+                                      "type": "string",
+                                    },
+                                    "vehicle": {
+                                      "minLength": 1,
+                                      "pattern": "\\S",
+                                      "type": "string",
+                                    },
+                                  },
+                                  "required": [
+                                    "id",
+                                    "name",
+                                    "phone",
+                                    "vehicle",
+                                    "status",
+                                  ],
+                                  "type": "object",
+                                },
+                                {
+                                  "type": "null",
+                                },
+                              ],
+                            },
                             "payment": {
                               "anyOf": [
                                 {
@@ -1633,6 +1778,7 @@ exports[`matches the complete tools, resources, templates, and prompts contract 
                             },
                           },
                           "required": [
+                            "partner",
                             "order",
                             "event",
                             "payment",

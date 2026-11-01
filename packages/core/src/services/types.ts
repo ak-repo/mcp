@@ -68,6 +68,7 @@ export interface OrderDetails {
   timeline: OrderEvent[];
 }
 export interface OrderMutationResult {
+  partner: DeliveryPartner | null;
   order: Order;
   event: OrderEvent;
   payment: Payment | null;

@@ -113,17 +113,17 @@ describe('previews and cancellation', () => {
     expect(snapshot()).toEqual(before);
   });
 
-  it('cancels with refund and leaves deliveries, partners and item snapshots unchanged', () => {
+  it('cancels with refund, releases delivery resources and preserves item snapshots', () => {
     const orderId = f.addOrder();
-    const beforeDelivery = f.services.delivery.trackDelivery(orderId);
     const beforeItems = f.services.order.getOrder(orderId).items;
     const result = f.services.order.executeCancel({ ...call(orderId), idempotencyKey: 'cancel-1' });
     expect(result.order).toMatchObject({ status: 'cancelled', cancel_reason: meta.reason });
     expect(result.payment?.status).toBe('refunded');
     expect(result.refund?.amount_paise).toBe(1000);
     const tracking = f.services.delivery.trackDelivery(orderId);
-    expect(tracking.delivery).toEqual(beforeDelivery.delivery);
-    expect(tracking.partner).toEqual(beforeDelivery.partner);
+    expect(tracking.delivery?.status).toBe('cancelled');
+    expect(tracking.partner?.status).toBe('available');
+    expect(result.partner).toEqual(tracking.partner);
     expect(f.services.order.getOrder(orderId).items).toEqual(beforeItems);
     expect(f.count('order_events')).toBe(1);
     expect(f.count('idempotency_keys')).toBe(1);
@@ -642,3 +642,66 @@ describe('read services, validation and audit', () => {
     expect(() => f.services.audit.recordCall({ ...input, argsJson: 'invalid' })).toThrow(AppError);
   });
 });
+
+it('cancels pending and missing deliveries without a partner', () => {
+  for (const delivery of ['pending', null] as const) {
+    const orderId = f.addOrder({ delivery, partnerId: null });
+    const preview = f.services.order.previewCancel(call(orderId));
+    expect(preview.partner_status_after).toBeNull();
+    const result = f.services.order.executeCancel(call(orderId));
+    expect(result.delivery?.status ?? null).toBe(delivery === null ? null : 'cancelled');
+    expect(result.partner).toBeNull();
+  }
+});
+it('cancellation after reassignment releases the new partner and replay cannot release it again', () => {
+  const orderId = f.addOrder();
+  f.services.delivery.executeReassign({ ...call(orderId), partnerId: 'DP-2' });
+  const request = { ...call(orderId), idempotencyKey: 'release' };
+  const result = f.services.order.executeCancel(request);
+  expect(result.partner).toMatchObject({ id: 'DP-2', status: 'available' });
+  f.write.prepare("UPDATE delivery_partners SET status='busy' WHERE id='DP-2'").run();
+  expect(f.services.order.executeCancel(request)).toEqual(result);
+  expect(f.services.delivery.trackDelivery(orderId).partner?.status).toBe('busy');
+});
+it('does not free a busy partner used by a different active delivery', () => {
+  const orderId = f.addOrder();
+  f.addOrder();
+  expect(f.services.order.previewCancel(call(orderId)).partner_status_after).toBe('busy');
+  expect(f.services.order.executeCancel(call(orderId)).partner?.status).toBe('busy');
+});
+it.each(['deliveries', 'delivery_partners'])(
+  'rolls back cancellation if %s update fails',
+  (table) => {
+    const orderId = f.addOrder();
+    f.write.exec(
+      `CREATE TEMP TRIGGER fail_release BEFORE UPDATE ON ${table} BEGIN SELECT RAISE(ABORT, 'failure'); END`,
+    );
+    const before = snapshot();
+    expect(() =>
+      f.services.order.executeCancel({ ...call(orderId), idempotencyKey: 'rollback' }),
+    ).toThrow(AppError);
+    expect(snapshot()).toEqual(before);
+  },
+);
+it.each(['available', 'offline'] as const)(
+  'cancellation preserves a partner already %s',
+  (status) => {
+    const orderId = f.addOrder();
+    f.write.prepare('UPDATE delivery_partners SET status=? WHERE id=?').run(status, 'DP-1');
+    expect(f.services.order.previewCancel(call(orderId)).partner_status_after).toBe(status);
+    expect(f.services.order.executeCancel(call(orderId)).partner?.status).toBe(status);
+  },
+);
+it.each(['delivered', 'cancelled'] as const)(
+  'cancellation preserves a terminal %s delivery and its partner',
+  (delivery) => {
+    const orderId = f.addOrder({ delivery });
+    const before = f.services.delivery.trackDelivery(orderId);
+    const preview = f.services.order.previewCancel(call(orderId));
+    expect(preview.delivery_status_after).toBe(delivery);
+    expect(preview.partner_status_after).toBe('busy');
+    const result = f.services.order.executeCancel(call(orderId));
+    expect(result.delivery).toEqual(before.delivery);
+    expect(result.partner).toEqual(before.partner);
+  },
+);

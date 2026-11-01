@@ -1,5 +1,6 @@
 import {
   DeliverySchema,
+  DeliveryPartnerSchema,
   InvoiceSchema,
   OrderEventSchema,
   OrderListFiltersSchema,
@@ -29,7 +30,12 @@ import {
 } from './context.js';
 import { paymentFor, refundBalance, applyRefund } from './refund.service.js';
 import { issueInvoice, planInvoice } from './invoice.service.js';
-import { advanceDelivery, planDeliveryAdvance } from './delivery.service.js';
+import {
+  advanceDelivery,
+  planDeliveryAdvance,
+  planDeliveryCancellation,
+  cancelDelivery,
+} from './delivery.service.js';
 import type {
   AdvanceInput,
   OrderDetails,
@@ -49,7 +55,11 @@ function cancellationPlan(repos: Repositories, input: OrderWriteInput) {
 }
 function cancellationPreview(repos: Repositories, input: OrderWriteInput) {
   const { order, payment, amount } = cancellationPlan(repos, input);
+  const delivery = planDeliveryCancellation(repos, order.id);
   return {
+    delivery_status_after: delivery.delivery?.status ?? null,
+    partner_id: delivery.partner?.id ?? null,
+    partner_status_after: delivery.partner?.status ?? null,
     order_id: order.id,
     from_status: order.status,
     to_status: 'cancelled' as const,
@@ -87,6 +97,7 @@ function cancel(repos: Repositories, input: OrderWriteInput): OrderMutationResul
     at,
   });
   repos.order.insertEvent(event);
+  const delivery = cancelDelivery(repos, order.id);
   const result =
     payment && amount > 0 ? applyRefund(repos, updated, payment, amount, input, true) : null;
   return {
@@ -95,12 +106,14 @@ function cancel(repos: Repositories, input: OrderWriteInput): OrderMutationResul
     payment: result?.payment ?? payment,
     refund: result?.refund ?? null,
     invoice: repos.invoice.forOrder(order.id),
-    delivery: singleton(repos.delivery.forOrder(order.id), 'delivery'),
+    delivery: delivery.delivery,
+    partner: delivery.partner,
   };
 }
 export function decodeOrderMutation(value: unknown): OrderMutationResult {
   const row = object(value);
   return {
+    partner: row['partner'] === undefined ? null : nullable(DeliveryPartnerSchema, row['partner']),
     order: OrderSchema.parse(row['order']),
     event: OrderEventSchema.parse(row['event']),
     payment: nullable(PaymentSchema, row['payment']),
@@ -164,10 +177,7 @@ export function createOrderService(context: ServiceContext) {
         const updated = OrderSchema.parse({ ...order, status: input.toStatus, updated_at: at });
         const delivery =
           input.toStatus === 'cancelled'
-            ? {
-                delivery: singleton(repos.delivery.forOrder(order.id), 'delivery'),
-                releasePartner: null,
-              }
+            ? { ...planDeliveryCancellation(repos, order.id), releasePartner: null }
             : planDeliveryAdvance(repos, updated, at);
         const cancellation =
           input.toStatus === 'cancelled' ? cancellationPreview(repos, input) : null;
@@ -179,7 +189,14 @@ export function createOrderService(context: ServiceContext) {
           reason: input.reason,
           delivery_status_after: delivery.delivery?.status ?? null,
           partner_id: delivery.delivery?.partner_id ?? null,
-          partner_status_after: delivery.releasePartner ? ('available' as const) : null,
+          partner_status_after:
+            cancellation?.partner_status_after ??
+            (delivery.releasePartner
+              ? ('available' as const)
+              : delivery.delivery?.partner_id
+                ? required(repos.delivery.partner(delivery.delivery.partner_id), 'Assigned partner')
+                    .status
+                : null),
           invoice_will_be_issued: invoice !== null && invoice.existing === null,
           refund_amount_paise: cancellation?.refund_amount_paise ?? 0,
           payment_status_after:
@@ -232,6 +249,9 @@ export function createOrderService(context: ServiceContext) {
             refund: null,
             invoice,
             delivery,
+            partner: delivery?.partner_id
+              ? required(repos.delivery.partner(delivery.partner_id), 'Assigned partner')
+              : null,
           };
         },
         decodeOrderMutation,

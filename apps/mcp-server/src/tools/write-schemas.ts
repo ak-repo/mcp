@@ -24,6 +24,9 @@ export const WriteInputSchema = z.strictObject({
 const refundMoney = { refund_amount_paise: PaiseSchema, refund_amount_display: TextSchema };
 const confirmation = { requiresConfirmation: z.boolean() };
 export const CancelPreviewSchema = z.strictObject({
+  delivery_status_after: DeliveryStatusSchema.nullable(),
+  partner_id: IdSchema.nullable(),
+  partner_status_after: PartnerStatusSchema.nullable(),
   order_id: IdSchema,
   from_status: OrderStatusSchema,
   to_status: z.literal('cancelled'),
@@ -72,6 +75,7 @@ export const ReassignPreviewSchema = z.strictObject({
 });
 export const PresentedRefundSchema = RefundSchema.extend({ amount_display: TextSchema });
 export const OrderMutationSchema = z.strictObject({
+  partner: DeliveryPartnerSchema.nullable(),
   order: PresentedOrderSchema,
   event: OrderEventSchema,
   payment: PresentedPaymentSchema.nullable(),
