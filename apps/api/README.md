@@ -116,6 +116,20 @@ Native Node 22 fetch helpers, normalized provider types, bounded FIFO concurrenc
 
 HTTP redirects are disabled. URL validation blocks literal link-local/metadata targets but does not prevent DNS rebinding. Retries apply only before any normalized event; callers must not retry a partially consumed stream. Errors use application-owned messages and do not echo provider bodies. Thinking is excluded from outbound history.
 
+
+### Native Ollama adapter and opt-in live check
+
+`createOllamaProvider(config)` in `src/llm` uses POST `/api/chat` and GET `/api/tags`. It sends bearer auth only when a key is configured. Set `LLM_BASE_URL=http://localhost:11434` for local Ollama, or keep the cloud default and set `LLM_API_KEY`. Select a tool-capable model using `LLM_MODEL`.
+
+```sh
+pnpm build
+LLM_LIVE=1 pnpm llm:live
+```
+
+The script loads workspace `.env` with process overrides, prints redacted model/stream results, requests a harmless dummy tool, executes nothing, and exits non-zero if no valid call is returned. It is excluded from tests. Without `LLM_LIVE=1` it refuses network access. No API server or initialized DB is needed.
+
+The adapter sends `think:false` when off and `think:true` when on; models that do not support the requested control may reject it. Thinking is streamed separately and omitted from outbound history. Native arguments are objects; defensive indexed string fragments are buffered until the terminal chunk. Ambiguous unindexed fragments fail. Call IDs are stable for a given request and ordinal, with provider IDs preserved. Capability flags describe adapter support; model probing remains planned. `auto` uses native tools until the future probe/fallback layer exists; `prompted` with tools fails explicitly.
+
 REST operations now require preview → explicit operator approval → execute with `confirmation_token` and Idempotency-Key. Previews add a token and five-minute expiry; the old confirm field is rejected. REST/MCP tokens are channel-separated. `API_CONFIRM_SECRET` is optional (32+ characters, no whitespace); unset uses a random process-local key. A stored semantic replay is returned before token verification, after auth and strict validation.
 
 Rate limits are independent per IP: overall `RATE_LIMIT_PER_MIN=1200` (including auth failures and unknown routes), write/preview/simulator `RATE_LIMIT_WRITE_PER_MIN=60`, and ticket issuance `RATE_LIMIT_TICKET_PER_MIN=60`. All must be positive integers. Tickets consume overall + ticket, not write quota. CORS exposes Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Idempotency-Replayed and X-Request-Id on ordinary, 429 and SSE responses. Allowed request headers include Authorization, Content-Type, Idempotency-Key, Last-Event-ID, X-Request-Id, and existing X-Run-Id.

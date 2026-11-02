@@ -19,7 +19,8 @@
     "start:http": "pnpm --silent --filter @foodops/mcp-server start:http",
     "dev:api": "pnpm --filter @foodops/api dev:api",
     "start:api": "pnpm --filter @foodops/api start:api",
-    "smoke:api": "node scripts/smoke-api.mjs"
+    "smoke:api": "node scripts/smoke-api.mjs",
+    "llm:live": "node scripts/llm-live.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

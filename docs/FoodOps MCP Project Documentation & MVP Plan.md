@@ -299,7 +299,7 @@ Normalized messages use `system`, `user`, `assistant` and `tool` roles. Assistan
 
 ### 9.2 Adapters
 
-The core primitives are implemented in `apps/api/src/llm`. Native `ollama` is the first adapter; `openai-compatible` and `anthropic` remain planned. No chat routes, agent loop, provider probe, automatic prompted-tools fallback, or context trimming are implemented in this phase. Reuse a provider instance to share its concurrency limiter. Provider creation does not perform network I/O.
+The core primitives are implemented in `apps/api/src/llm`. Native `ollama` is implemented using `/api/chat` streaming NDJSON and `/api/tags`; `openai-compatible` and `anthropic` remain planned. No chat routes, agent loop, provider probe, automatic prompted-tools fallback, or context trimming are implemented in this phase. Reuse a provider instance to share its concurrency limiter. Provider creation does not perform network I/O.
 
 ### 9.3 Configuration
 
@@ -338,6 +338,9 @@ URL validation is not DNS-rebinding protection. Redirects are disabled. Thinking
 - **Errors:** every adapter maps vendor errors to a small set (`auth`, `rate_limit`, `timeout`, `model_not_found`, `context_overflow`, `provider_error`) so the UI shows consistent messages.
 
 ### 9.5 Probe
+
+The opt-in `LLM_LIVE=1 pnpm llm:live` script lists models and requests one harmless dummy tool call, without executing it. Build first. It uses workspace LLM configuration, never prints the key, and is excluded from tests. Native adapter fixtures use only local fake HTTP servers. Native tool calls use object arguments; indexed string fragments are supported defensively, but ambiguous unindexed fragments fail. Provider IDs are preserved and otherwise deterministic request/ordinal IDs are generated.
+
 
 **Planned:** `POST /api/providers/test` runs: (1) list models (`/models` or `/api/tags`), (2) check the configured model exists, (3) a one-shot tool-call smoke test with a dummy tool. It returns detected capabilities and a recommended `LLM_TOOL_MODE`. The Settings page shows the result.
 
