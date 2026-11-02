@@ -295,42 +295,43 @@ The API talks to models only through an internal `LLMProvider` interface. Nothin
 
 ### 9.1 Interface
 
-- **Normalized messages:** roles `system`, `user`, `assistant`, `tool`; assistant messages may carry `tool_calls` (id, name, arguments object); tool messages carry the call id and result text.
-- **Normalized tools:** name, description, JSON Schema for parameters (converted from MCP `tools/list`).
-- **Method:** `chat(messages, tools, options)` returns an async stream of normalized events: `text_delta`, `tool_call`, `usage`, `done`, `error`.
-- **Capabilities** declared per provider/model: `toolCalling`, `streaming`, `maxContext`.
+Normalized messages use `system`, `user`, `assistant` and `tool` roles. Assistant `toolCalls` contain id, name and object arguments; tool results carry toolCallId, toolName and content. Tools have name, description and JSON Schema parameters. `LLMProvider.chat()` returns an async iterable of `text_delta`, `thinking_delta`, `tool_call`, `usage`, and `done`; failures throw `LLMError`. Capabilities are adapter-level `toolCalling`, `streaming`, and `thinking`, not a guarantee for every model. Thinking is never included in outbound history.
 
 ### 9.2 Adapters
 
-| Adapter | Covers | Notes |
-| --- | --- | --- |
-| `openai-compatible` | Ollama (`http://localhost:11434/v1`), LM Studio, vLLM, llama.cpp server, OpenAI, Groq, OpenRouter, Together, Gemini's OpenAI-compatible endpoint | Default adapter. Base URL, optional API key, model name. |
-| `ollama-native` | Ollama `/api/chat` | Use when you need native options (`num_ctx`, `keep_alive`, `think`). |
-| `anthropic` | Anthropic Messages API | Different tool-call format, handled inside the adapter. |
-
-Adding a vendor means writing one adapter file and registering it. Frontend, agent loop, and MCP code are untouched.
+The core primitives are implemented in `apps/api/src/llm`. Native `ollama` is the first adapter; `openai-compatible` and `anthropic` remain planned. No chat routes, agent loop, provider probe, automatic prompted-tools fallback, or context trimming are implemented in this phase. Reuse a provider instance to share its concurrency limiter. Provider creation does not perform network I/O.
 
 ### 9.3 Configuration
 
-Environment variables (overridable from the Settings page, secrets kept server-side):
+Process environment overrides workspace-root `.env`. Secrets stay server-side. Settings overrides remain planned.
 
-| Variable | Example | Meaning |
+| Variable | Default | Meaning |
 | --- | --- | --- |
-| `LLM_PROVIDER` | `openai-compatible` | Adapter id. |
-| `LLM_BASE_URL` | `http://localhost:11434/v1` | Endpoint. |
-| `LLM_MODEL` | `qwen2.5:7b` | Model name as the provider knows it. |
-| `LLM_API_KEY` | (empty for local Ollama) | Sent as bearer token if set. |
-| `LLM_TOOL_MODE` | `auto` | `native`, `prompted`, or `auto` (probe, then pick). |
-| `LLM_NUM_CTX` | `16384` | Context window for Ollama requests. |
-| `LLM_TEMPERATURE` | `0.2` | Low for reliable tool use. |
-| `LLM_TIMEOUT_MS` | `120000` | First-token timeout; local cold starts are slow. |
-| `LLM_MAX_CONCURRENCY` | `1` | Queue requests; protects local hardware and free tiers. |
+| `LLM_PROVIDER` | `ollama` | `ollama`, `openai-compatible`, or `anthropic`; only native Ollama implemented in this phase. |
+| `LLM_BASE_URL` | `https://ollama.com` | HTTP(S) base; native adapter appends `/api/chat` or `/api/tags`. No userinfo/query/fragment or link-local metadata targets. Local/private hosts allowed. |
+| `LLM_MODEL` | unset | Required only when chat starts, not at boot or model listing. |
+| `LLM_API_KEY` | unset | Optional bearer key; required by direct Ollama cloud. Never logged. |
+| `LLM_TOOL_MODE` | `auto` | Native adapter uses native tools for auto/native; prompted tools deferred and rejected explicitly. |
+| `LLM_NUM_CTX` | `16384` | Positive context window. |
+| `LLM_TEMPERATURE` | `0.2` | Finite number 0–2. |
+| `LLM_FIRST_BYTE_TIMEOUT_MS` | `60000` | Connect/headers/first body byte deadline, max 2147483647 ms. |
+| `LLM_IDLE_TIMEOUT_MS` | `30000` | Between-byte deadline, max 2147483647 ms. |
+| `LLM_MAX_CONCURRENCY` | `1` | Positive concurrent operations per reused provider; queue capped at 100. |
+| `LLM_MAX_RETRIES` | `2` | 0–10 retries, only before the first normalized event. |
+| `LLM_THINK` | `off` | Explicit boolean off/on; model support varies. |
+| `LLM_CONTEXT_BUDGET_TOKENS` | `12000` | Positive budget reserved for the later history-trimming layer. |
+
+Retries use exponential full jitter (500 ms base, 30 s cap), honor Retry-After seconds/dates, and are abortable. Only retryable failures before any event are retried; partial streams are never replayed. The queue holds its slot through retries. Error kinds are auth, rate_limit, timeout, model_not_found, context_overflow, bad_request, provider_error, network, aborted. Provider bodies and raw network error text are never exposed.
+
+Schema profiles inline local refs, reject cycles/external refs, remove metadata, and flatten a single non-null union into an optional property. Ollama drops additionalProperties and rejects general unions; OpenAI/Anthropic preserve boolean additionalProperties and non-null unions. Unsupported structural constraints fail rather than silently weaken validation. Output is deterministic and input is not mutated.
+
+URL validation is not DNS-rebinding protection. Redirects are disabled. Thinking history exclusion is an intentional project policy despite Ollama examples preserving it. Compared with the original plan, native Ollama is the default, model selection is deferred until chat, separate byte deadlines replace LLM_TIMEOUT_MS, and errors throw instead of emitting an error event.
 
 ### 9.4 Provider differences the adapters must absorb
 
 - **Context size:** Ollama's default context is small (historically 2,048–4,096 tokens). With 12 tool schemas plus history, it silently truncates. Always send `num_ctx` (via the native adapter, or the server-side `OLLAMA_CONTEXT_LENGTH` setting when using the OpenAI-compatible route) and trim history to fit.
 - **Tool-calling support varies by model.** Use models tagged for tools (Llama 3.1+, Qwen 2.5/3, Mistral-family tool variants). Prefer 7–8B or larger; smaller models are unreliable at multi-step tool use.
-- **Prompted-tools fallback:** for models without native tool calling, the adapter injects tool descriptions into the system prompt, asks for a strict JSON tool-call object, parses it, validates arguments with Zod, and retries once with a repair message on failure. Selected automatically when `LLM_TOOL_MODE=auto` and the probe fails.
+- **Planned prompted-tools fallback:** for models without native tool calling, the adapter injects tool descriptions into the system prompt, asks for a strict JSON tool-call object, parses it, validates arguments with Zod, and retries once with a repair message on failure. Selected automatically when `LLM_TOOL_MODE=auto` and the probe fails.
 - **Streaming of tool calls:** some providers send a complete tool call in one chunk, others stream argument fragments. The adapter buffers and emits one `tool_call` event only when arguments parse as complete JSON.
 - **Schema dialects:** some providers reject parts of JSON Schema. A sanitizer strips `$schema` and `additionalProperties`, inlines `$ref`, and flattens simple `anyOf` before sending tools.
 - **Rate limits (free tiers):** honor `Retry-After`, exponential backoff with jitter, concurrency queue, clear UI message on exhaustion.
@@ -338,7 +339,7 @@ Environment variables (overridable from the Settings page, secrets kept server-s
 
 ### 9.5 Probe
 
-`POST /api/providers/test` runs: (1) list models (`/models` or `/api/tags`), (2) check the configured model exists, (3) a one-shot tool-call smoke test with a dummy tool. It returns detected capabilities and a recommended `LLM_TOOL_MODE`. The Settings page shows the result.
+**Planned:** `POST /api/providers/test` runs: (1) list models (`/models` or `/api/tags`), (2) check the configured model exists, (3) a one-shot tool-call smoke test with a dummy tool. It returns detected capabilities and a recommended `LLM_TOOL_MODE`. The Settings page shows the result.
 
 ## 10. Agent Loop (apps/api)
 

@@ -93,6 +93,29 @@ Use `POST /api/stream/ticket` with bearer auth, then `GET /api/stream?ticket=...
 
 `SIMULATOR=off` is the default. With `on`, synthetic actions use core services as `system`. GET/POST `/api/simulator` reports statistics and changes runtime settings; restart restores environment defaults. Run `pnpm smoke:api` after building to exercise SSE and REST cancellation on an isolated temporary seed.
 
+
+## LLM core
+
+Native Node 22 fetch helpers, normalized provider types, bounded FIFO concurrency, byte deadlines, safe errors and schema profiles live in `src/llm`. No chat routes or agent loop are exposed. Missing model/key does not prevent API boot. Reuse a provider instance to share concurrency. No extra dependencies are installed.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LLM_PROVIDER` | `ollama` | `ollama`, `openai-compatible`, or `anthropic`; only native Ollama implemented in this phase. |
+| `LLM_BASE_URL` | `https://ollama.com` | HTTP(S) base; native adapter appends `/api/chat` or `/api/tags`. No userinfo/query/fragment or link-local metadata targets. Local/private hosts allowed. |
+| `LLM_MODEL` | unset | Required only when chat starts, not at boot or model listing. |
+| `LLM_API_KEY` | unset | Optional bearer key; required by direct Ollama cloud. Never logged. |
+| `LLM_TOOL_MODE` | `auto` | Native adapter uses native tools for auto/native; prompted tools deferred and rejected explicitly. |
+| `LLM_NUM_CTX` | `16384` | Positive context window. |
+| `LLM_TEMPERATURE` | `0.2` | Finite number 0–2. |
+| `LLM_FIRST_BYTE_TIMEOUT_MS` | `60000` | Connect/headers/first body byte deadline, max 2147483647 ms. |
+| `LLM_IDLE_TIMEOUT_MS` | `30000` | Between-byte deadline, max 2147483647 ms. |
+| `LLM_MAX_CONCURRENCY` | `1` | Positive concurrent operations per reused provider; queue capped at 100. |
+| `LLM_MAX_RETRIES` | `2` | 0–10 retries, only before the first normalized event. |
+| `LLM_THINK` | `off` | Explicit boolean off/on; model support varies. |
+| `LLM_CONTEXT_BUDGET_TOKENS` | `12000` | Positive budget reserved for the later history-trimming layer. |
+
+HTTP redirects are disabled. URL validation blocks literal link-local/metadata targets but does not prevent DNS rebinding. Retries apply only before any normalized event; callers must not retry a partially consumed stream. Errors use application-owned messages and do not echo provider bodies. Thinking is excluded from outbound history.
+
 REST operations now require preview → explicit operator approval → execute with `confirmation_token` and Idempotency-Key. Previews add a token and five-minute expiry; the old confirm field is rejected. REST/MCP tokens are channel-separated. `API_CONFIRM_SECRET` is optional (32+ characters, no whitespace); unset uses a random process-local key. A stored semantic replay is returned before token verification, after auth and strict validation.
 
 Rate limits are independent per IP: overall `RATE_LIMIT_PER_MIN=1200` (including auth failures and unknown routes), write/preview/simulator `RATE_LIMIT_WRITE_PER_MIN=60`, and ticket issuance `RATE_LIMIT_TICKET_PER_MIN=60`. All must be positive integers. Tickets consume overall + ticket, not write quota. CORS exposes Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Idempotency-Replayed and X-Request-Id on ordinary, 429 and SSE responses. Allowed request headers include Authorization, Content-Type, Idempotency-Key, Last-Event-ID, X-Request-Id, and existing X-Run-Id.

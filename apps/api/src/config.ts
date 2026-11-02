@@ -48,7 +48,63 @@ const positiveInteger = z
       .transform(Number),
   ])
   .pipe(z.number().int().positive().max(Number.MAX_SAFE_INTEGER));
+const optionalText = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.string().trim().min(1).optional(),
+);
+const llmBaseUrl = z.string().refine((value) => {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      return false;
+    if (
+      /^169\.254\./.test(hostname) ||
+      /^fe[89ab][0-9a-f]:/i.test(hostname) ||
+      hostname === 'metadata.google.internal' ||
+      hostname === 'metadata.google.internal.'
+    )
+      return false;
+    if (hostname.startsWith('::ffff:')) {
+      const parts = hostname.slice(7).split(':');
+      if (parts[0] === 'a9fe' || /^169\.254\./.test(parts.join(':'))) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+});
 export const ConfigSchema = z.object({
+  LLM_PROVIDER: z.enum(['ollama', 'openai-compatible', 'anthropic']).default('ollama'),
+  LLM_BASE_URL: llmBaseUrl.default('https://ollama.com'),
+  LLM_MODEL: optionalText,
+  LLM_API_KEY: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z
+      .string()
+      .min(1)
+      .refine((value) =>
+        [...value].every(
+          (character) => character.charCodeAt(0) > 32 && character.charCodeAt(0) !== 127,
+        ),
+      )
+      .optional(),
+  ),
+  LLM_TOOL_MODE: z.enum(['auto', 'native', 'prompted']).default('auto'),
+  LLM_NUM_CTX: positiveInteger.default(16384),
+  LLM_TEMPERATURE: z.coerce.number().finite().min(0).max(2).default(0.2),
+  LLM_FIRST_BYTE_TIMEOUT_MS: positiveInteger.pipe(z.number().max(2147483647)).default(60000),
+  LLM_IDLE_TIMEOUT_MS: positiveInteger.pipe(z.number().max(2147483647)).default(30000),
+  LLM_MAX_CONCURRENCY: positiveInteger.default(1),
+  LLM_MAX_RETRIES: z.coerce.number().int().min(0).max(10).default(2),
+  LLM_THINK: z.enum(['off', 'on']).default('off'),
+  LLM_CONTEXT_BUDGET_TOKENS: positiveInteger.default(12000),
   DB_PATH: z
     .string()
     .trim()
