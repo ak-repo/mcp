@@ -780,8 +780,58 @@ it('authenticates the operator identity route', async () => {
     { authorization: 'Bearer wrong' },
     { authorization: [AUTH.authorization, AUTH.authorization] },
   ]) {
-    const rejected = await f.app.inject({ url: '/api/me', headers: headers as Record<string, string | string[]> });
+    const rejected = await f.app.inject({
+      url: '/api/me',
+      headers: headers as Record<string, string | string[]>,
+    });
     expect(rejected.statusCode).toBe(401);
     expect(rejected.json().error.code).toBe('UNAUTHORIZED');
   }
+});
+it('sets the replay header when another caller commits after the preliminary lookup', async () => {
+  const op = operation('cancel');
+  const approval = await token(op.url, op.body);
+  const replay = f.runtime.services.order.replayCancel;
+  let committed: unknown;
+  vi.spyOn(f.runtime.services.order, 'replayCancel').mockImplementationOnce((input) => {
+    const before = replay(input);
+    expect(before).toBeUndefined();
+    committed = f.runtime.services.order.executeCancel(input);
+    return before;
+  });
+  const response = await f.app.inject({
+    method: 'POST',
+    url: op.url,
+    headers: keyHeaders,
+    payload: { ...op.body, confirmation_token: approval },
+  });
+  expect(response.statusCode, response.body).toBe(200);
+  expect(response.json()).toEqual(committed);
+  expect(response.headers['idempotency-replayed']).toBe('true');
+});
+it('checks the signed preview inside the transaction if state changes after token verification', async () => {
+  const op = operation('cancel');
+  const approval = await token(op.url, op.body);
+  const execute = f.runtime.services.order.executeCancelWithMetadata;
+  vi.spyOn(f.runtime.services.order, 'executeCancelWithMetadata').mockImplementationOnce(
+    (input, options) => {
+      f.runtime.services.order.executeCancel({
+        orderId: input.orderId,
+        actor: 'system',
+        reason: 'Another writer cancelled first',
+      });
+      return execute(input, options);
+    },
+  );
+  const response = await f.app.inject({
+    method: 'POST',
+    url: op.url,
+    headers: keyHeaders,
+    payload: { ...op.body, confirmation_token: approval },
+  });
+  expect(response.statusCode, response.body).toBe(409);
+  expect(response.json().error).toMatchObject({
+    code: 'CONFLICT',
+    hint: 'Re-run the preview and confirm again',
+  });
 });

@@ -168,6 +168,19 @@ try {
     (event) => event.order_id === order.id || event.entity === 'partner',
   ))
     console.log(`SSE ${JSON.stringify(event)}`);
+  const replayResponse = await fetch(`${base}/api/orders/${order.id}/cancel`, {
+    method: 'POST',
+    headers: {
+      ...headers,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': 'smoke-api-cancel',
+    },
+    body: JSON.stringify({ reason, confirmation_token: preview.confirmation_token }),
+  });
+  assert.equal(replayResponse.status, 200);
+  assert.equal(replayResponse.headers.get('idempotency-replayed'), 'true');
+  assert.deepEqual(await replayResponse.json(), result);
+  console.log('PASS stored replay returned the same result with Idempotency-Replayed: true');
   const tickDeadline = Date.now() + 5000;
   let stats = await api('/api/simulator');
   while (stats.ticks === 0 && Date.now() < tickDeadline) {

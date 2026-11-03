@@ -29,15 +29,20 @@ export function createAuditRepository(db: DatabaseConnection) {
     pruneChanges(at: string) {
       return db.prepare('DELETE FROM change_log WHERE at < ?').run(at).changes;
     },
+    pruneCalls(at: string) {
+      return db.prepare('DELETE FROM tool_call_log WHERE at < ?').run(at).changes;
+    },
     maxCallRowId() {
       return db
-        .prepare<[], { id: number }>('SELECT coalesce(max(rowid),0) AS id FROM tool_call_log')
+        .prepare<[], { id: number }>(
+          "SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='tool_call_feed_sequence'),0) AS id",
+        )
         .get()!.id;
     },
     callsAfterRowId(id: number, limit: number) {
       return many(
         db,
-        'SELECT rowid, tool, status, error_code, latency_ms, at FROM tool_call_log WHERE rowid > ? ORDER BY rowid LIMIT ?',
+        'SELECT s.seq AS rowid, c.tool, c.status, c.error_code, c.latency_ms, c.at FROM tool_call_feed_sequence s JOIN tool_call_log c ON c.id = s.call_id WHERE s.seq > ? ORDER BY s.seq LIMIT ?',
         [id, limit],
         ToolCallFeedSchema,
       );

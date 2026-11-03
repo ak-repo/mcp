@@ -26,7 +26,7 @@ export async function startApi(options: {
   try {
     app = buildApp({ config: options.config, runtime });
   } catch (error) {
-    runtime.close();
+    await runtime.shutdown();
     throw error;
   }
   let stopping = false;
@@ -40,7 +40,7 @@ export async function startApi(options: {
     if (stopping) app.server.closeIdleConnections();
   });
   app.addHook('onClose', async () => {
-    runtime.close();
+    await runtime.shutdown();
   });
   let closing: Promise<void> | undefined;
   const handler = () => {
@@ -91,7 +91,7 @@ export async function startApi(options: {
     try {
       await app.close();
     } finally {
-      runtime.close();
+      await runtime.shutdown();
       uninstall();
     }
     throw error;

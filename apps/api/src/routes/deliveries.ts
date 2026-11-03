@@ -89,7 +89,7 @@ const deliveries: FastifyPluginAsync<{ runtime: Runtime }> = async (
           idempotencyKey: key,
         }),
         services.delivery.replayReassign,
-        services.delivery.executeReassign,
+        services.delivery.executeReassignWithMetadata,
         confirmation,
         'reassign',
       );

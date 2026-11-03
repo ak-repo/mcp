@@ -159,7 +159,7 @@ describe('HTTP lifecycle', () => {
 
   it('starts on a non-loopback bind, rejects raw duplicate auth, and shuts down once', async () => {
     f = fixture({ API_HOST: '0.0.0.0' });
-    const close = vi.spyOn(f.runtime, 'close');
+    const close = vi.spyOn(f.runtime, 'shutdown');
     application = await startApi({ config: f.config, runtime: f.runtime, port: 0, signals: false });
     expect(application.app.server.address()).toMatchObject({ address: '0.0.0.0' });
     const address = application.app.server.address();
@@ -189,7 +189,7 @@ describe('HTTP lifecycle', () => {
     application = occupied;
     const address = occupied.app.server.address();
     if (!address || typeof address === 'string') throw new Error('Missing listener');
-    const close = vi.spyOn(f.runtime, 'close');
+    const close = vi.spyOn(f.runtime, 'shutdown');
     await expect(
       startApi({ config: f.config, runtime: f.runtime, port: address.port, signals: false }),
     ).rejects.toThrow();

@@ -32,16 +32,26 @@ Tests use temporary core-seeded databases. Build before process tests, which lau
 
 Process environment overrides the workspace-root `.env`; defaults apply only when a value is absent. Empty values are invalid. Tokens and rejected configuration values are never logged.
 
-| Variable             | Default                 | Meaning                                                                                                   |
-| -------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------- |
-| `DB_PATH`            | `./data/foodops.sqlite` | Existing initialized SQLite file, relative to workspace root.                                             |
-| `API_HOST`           | `127.0.0.1`             | Listener IP address or hostname; proxy headers are never trusted.                                         |
-| `API_PORT`           | `3002`                  | Integer 1–65535.                                                                                          |
-| `ADMIN_TOKEN`        | required                | At least 32 characters without whitespace; separate from MCP authentication.                              |
-| `WEB_ORIGIN`         | `http://localhost:5173` | Comma-separated exact HTTP(S) origins; no wildcards, trailing slash, paths, or credentials.               |
-| `LOG_LEVEL`          | `info`                  | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                          |
-| `SIMULATOR`          | `off`                   | `off` or `on`; `on` enables autonomous synthetic traffic.                                                 |
-| `RATE_LIMIT_PER_MIN` | `120`                   | Positive safe integer; per-IP, per-process requests per minute. Write hook uses one quarter, minimum one. |
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DB_PATH` | `./data/foodops.sqlite` | Existing initialized SQLite file; relative to workspace root. |
+| `API_HOST` | `127.0.0.1` | Listener host; trustProxy is false. |
+| `API_PORT` | `3002` | Integer 1–65535. |
+| `ADMIN_TOKEN` | `required` | 32+ characters without whitespace; bearer auth. |
+| `API_CONFIRM_SECRET` | `unset` | Optional 32+ characters without whitespace; random per-process when unset/empty. |
+| `WEB_ORIGIN` | `http://localhost:5173` | Comma-separated exact HTTP(S) origins; credentials disabled. |
+| `LOG_LEVEL` | `info` | fatal, error, warn, info, debug, trace, silent. |
+| `RATE_LIMIT_PER_MIN` | `1200` | Positive safe integer; overall per-IP requests/minute. |
+| `RATE_LIMIT_WRITE_PER_MIN` | `60` | Positive safe integer; independent write/preview/simulator bucket. |
+| `RATE_LIMIT_TICKET_PER_MIN` | `60` | Positive safe integer; independent ticket issuance bucket. |
+| `SIMULATOR` | `off` | off or on; explicitly authorized synthetic traffic. |
+| `SIMULATOR_INTERVAL_MS` | `5000` | 1000–60000 ms; jitter ±10%, clamped to bounds. |
+| `SIMULATOR_SEED` | `42` | Unsigned 32-bit deterministic action RNG seed. |
+| `SIMULATOR_MAX_ACTIVE` | `60` | Positive safe integer; simulator placement admission cap. |
+| `CHANGE_FEED_POLL_MS` | `500` | 100–60000 ms; single non-overlapping poller. |
+| `SSE_MAX_STREAMS` | `50` | 1–1000 concurrent streams. |
+| `SSE_REPLAY_LIMIT` | `1000` | 1–10000 durable change events per reconnect. |
+| `CALL_LOG_RETENTION_DAYS` | `30` | 1–1000000 days; audit history pruned hourly, together with 24-hour change history. |
 
 ## HTTP behavior
 
@@ -67,7 +77,7 @@ Exact versions were selected against the 2026-10-18 publication cutoff (14 days 
 
 ## REST writes
 
-Read and show the preview to the operator, then execute with `confirmation_token` and one `Idempotency-Key` header (8–128 safe characters). The actor is always server-assigned `ops`. REST tokens bind the request and preview state; hosts enforce operator approval. MCP uses a separate signature domain. Replays return the original result; `Idempotency-Replayed: true` is set when detectable. See [docs/api.md](../../docs/api.md) for the full contract and cross-process detection limits.
+Read and show the preview to the operator, then execute with `confirmation_token` and one `Idempotency-Key` header (8–128 safe characters). The actor is always server-assigned `ops`. REST tokens bind the request and preview state; hosts enforce operator approval. MCP uses a separate signature domain. Replays return the original result; `Idempotency-Replayed: true` is set for every stored replay, including transaction-level races. See [docs/api.md](../../docs/api.md) for the full contract and transactional replay metadata.
 
 ### Live updates and simulator
 
@@ -88,3 +98,5 @@ REST operations now require preview → explicit operator approval → execute w
 Rate limits are independent per IP: overall `RATE_LIMIT_PER_MIN=1200` (including auth failures and unknown routes), write/preview/simulator `RATE_LIMIT_WRITE_PER_MIN=60`, and ticket issuance `RATE_LIMIT_TICKET_PER_MIN=60`. All must be positive integers. Tickets consume overall + ticket, not write quota. CORS exposes Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Idempotency-Replayed and X-Request-Id on ordinary, 429 and SSE responses. Allowed request headers include Authorization, Content-Type, Idempotency-Key, Last-Event-ID, X-Request-Id, and existing X-Run-Id.
 
 Simulator backlog: `SIMULATOR_MAX_ACTIVE=60` (positive safe integer) prevents simulator placement when all active orders, including failed payments, reach the cap. External writers are not capped. Progression samples oldest untouched candidates per status (`updated_at ASC, id ASC`), excluding failed payments. Status adds `ticks_waiting_for_partner`, counting once per tick where any pickup candidate waits for a partner; other actions may still progress.
+
+Audit history retention is controlled by CALL_LOG_RETENTION_DAYS (default 30). Its feed cursor is monotonic across pruning. Runtime.shutdown() stops and awaits background work, closes streams/tickets, and then closes DB handles; close() returns the same shutdown promise and must be awaited. Close Fastify before disposing an embedded runtime so HTTP handlers can drain.

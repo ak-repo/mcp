@@ -1,15 +1,25 @@
+import { HttpError } from '../lib/http-errors.js';
+import { ErrorCode } from '@foodops/shared';
 import type { ServerResponse } from 'node:http';
 import type { FeedEvent } from './change-feed.js';
 export function encodeEvent(event: FeedEvent): string {
   return `${event.id === undefined ? '' : `id: ${event.id}\n`}event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
 }
 export function createStreams(limit: number) {
+  let stopped = false;
   const clients = new Set<() => void>();
   return {
     get full() {
-      return clients.size >= limit;
+      return stopped || clients.size >= limit;
     },
     open(response: ServerResponse, cleanup: () => void) {
+      if (stopped)
+        throw new HttpError(
+          503,
+          ErrorCode.INTERNAL,
+          'Stream service is stopping',
+          'Retry after the API restarts',
+        );
       let closed = false;
       let blocked = false;
       let bytes = 0;
@@ -57,6 +67,7 @@ export function createStreams(limit: number) {
       return { send: (event: FeedEvent) => send(encodeEvent(event)), close };
     },
     close() {
+      stopped = true;
       for (const close of [...clients]) close();
     },
   };

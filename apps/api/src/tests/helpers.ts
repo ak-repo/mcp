@@ -24,13 +24,13 @@ export function fixture(overrides: Partial<Config> = {}) {
     }),
     ...overrides,
   };
-  const runtime = openRuntime(config);
   const logs: string[] = [];
-  runtime.logger = createLogger('info', {
+  const logger = createLogger('info', {
     write: (line: string) => {
       logs.push(line);
     },
   });
+  const runtime = openRuntime(config, { logger });
   const app = buildApp({ config, runtime });
   return {
     directory,
@@ -43,7 +43,7 @@ export function fixture(overrides: Partial<Config> = {}) {
       try {
         await app.close();
       } finally {
-        runtime.close();
+        await runtime.shutdown();
         rmSync(directory, { recursive: true, force: true });
       }
     },

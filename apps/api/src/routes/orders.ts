@@ -151,7 +151,7 @@ const orders: FastifyPluginAsync<{ runtime: Runtime }> = async (
           idempotencyKey: key,
         }),
         services.order.replayAdvanceStatus,
-        services.order.advanceStatus,
+        services.order.advanceStatusWithMetadata,
         confirmation,
         'advance',
       );
@@ -173,7 +173,7 @@ const orders: FastifyPluginAsync<{ runtime: Runtime }> = async (
           idempotencyKey: key,
         }),
         services.order.replayCancel,
-        services.order.executeCancel,
+        services.order.executeCancelWithMetadata,
         confirmation,
         'cancel',
       );
@@ -196,7 +196,7 @@ const orders: FastifyPluginAsync<{ runtime: Runtime }> = async (
           idempotencyKey: key,
         }),
         services.refund.replayRefund,
-        services.refund.executeRefund,
+        services.refund.executeRefundWithMetadata,
         confirmation,
         'refund',
       );

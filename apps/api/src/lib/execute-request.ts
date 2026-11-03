@@ -12,7 +12,7 @@ export function executeRequest<S extends z.ZodType, I, R>(
   schema: S,
   toInput: (body: z.output<S>, key: string) => I,
   replay: (input: I) => R | undefined,
-  execute: (input: I, options: { expectedPreviewHash: string }) => R,
+  execute: (input: I, options: { expectedPreviewHash: string }) => { result: R; replayed: boolean },
   confirmation: ConfirmationSigner,
   operation: string,
 ): R {
@@ -43,5 +43,7 @@ export function executeRequest<S extends z.ZodType, I, R>(
     Object.entries(input as Record<string, unknown>).filter(([key]) => key !== 'idempotencyKey'),
   );
   const claims = confirmation.verifyRequest(token, { channel: 'rest', operation, args });
-  return execute(input, { expectedPreviewHash: claims.preview });
+  const outcome = execute(input, { expectedPreviewHash: claims.preview });
+  if (outcome.replayed) reply.header('Idempotency-Replayed', 'true');
+  return outcome.result;
 }

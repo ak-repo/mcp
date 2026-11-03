@@ -13,16 +13,17 @@ afterEach(async () => {
   await f?.close();
   f = undefined;
   vi.restoreAllMocks();
+  vi.useRealTimers();
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
 });
 describe('runtime ownership', () => {
-  it('opens services, checks readiness, and closes handles idempotently', () => {
+  it('opens services, checks readiness, and closes handles idempotently', async () => {
     f = fixture();
     expect(f.runtime.services.catalog.searchRestaurants({ limit: 1 }).items).toHaveLength(1);
     expect(() => f?.runtime.checkReady()).not.toThrow();
-    f.runtime.close();
-    f.runtime.close();
+    await f.runtime.shutdown();
+    await f.runtime.shutdown();
     expect(() => f?.runtime.checkReady()).toThrow();
   });
   it('does not create missing databases', () => {
@@ -82,4 +83,32 @@ describe('runtime ownership', () => {
       db.close();
     }
   });
+});
+
+it('close deactivates both loops synchronously and waits for an in-flight tick before closing DBs', async () => {
+  vi.useFakeTimers();
+  f = fixture({ SIMULATOR: 'on', SIMULATOR_INTERVAL_MS: 1000 });
+  const runtime = f.runtime;
+  const read = runtime.services.order.listProgressable;
+  let closing: Promise<void> | undefined;
+  let observedOpen = false;
+  vi.spyOn(runtime.services.order, 'listProgressable').mockImplementationOnce((input) => {
+    closing = runtime.close();
+    expect(runtime.shutdown()).toBe(closing);
+    runtime.checkReady();
+    observedOpen = true;
+    expect(() => runtime.tickets.issue()).toThrow(/stopping/);
+    return read(input);
+  });
+  runtime.start();
+  await vi.advanceTimersByTimeAsync(1100);
+  await closing;
+  expect(observedOpen).toBe(true);
+  expect(() => runtime.checkReady()).toThrow();
+  expect(f.logs.filter((line) => /"level":(40|50|60)/.test(line))).toEqual([]);
+  const ticks = runtime.simulator.status().ticks;
+  runtime.start();
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(runtime.simulator.status().ticks).toBe(ticks);
+  vi.useRealTimers();
 });

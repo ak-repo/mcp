@@ -25,7 +25,8 @@ export interface Runtime {
   stop(): Promise<void>;
   logger: Logger;
   checkReady(): void;
-  close(): void;
+  close(): Promise<void>;
+  shutdown(): Promise<void>;
 }
 export function createLogger(
   level: Config['LOG_LEVEL'] = 'info',
@@ -61,7 +62,7 @@ export function createLogger(
     destination ?? pino.destination({ dest: 1, sync: true }),
   );
 }
-export function openRuntime(config: Config): Runtime {
+export function openRuntime(config: Config, options: { logger?: Logger } = {}): Runtime {
   let write: DatabaseConnection | undefined;
   let read: DatabaseConnection | undefined;
   try {
@@ -78,8 +79,13 @@ export function openRuntime(config: Config): Runtime {
       services.catalog.searchRestaurants({ limit: 1 });
     };
     checkReady();
-    const logger = createLogger(config.LOG_LEVEL);
-    const feed = createChangeFeed(services, logger, config.CHANGE_FEED_POLL_MS);
+    const logger = options.logger ?? createLogger(config.LOG_LEVEL);
+    const feed = createChangeFeed(
+      services,
+      logger,
+      config.CHANGE_FEED_POLL_MS,
+      config.CALL_LOG_RETENTION_DAYS,
+    );
     const tickets = createTickets();
     const streams = createStreams(config.SSE_MAX_STREAMS);
     const simulator = createSimulator(
@@ -90,6 +96,34 @@ export function openRuntime(config: Config): Runtime {
       { maxActive: config.SIMULATOR_MAX_ACTIVE },
     );
     let closed = false;
+    let stopping = false;
+    let stopped: Promise<void> | undefined;
+    let shutdownPromise: Promise<void> | undefined;
+    function stop(): Promise<void> {
+      stopping = true;
+      if (!stopped) {
+        // Both loops are deactivated synchronously, before either in-flight task is awaited.
+        const simulatorStopped = simulator.stop();
+        const feedStopped = feed.stop();
+        streams.close();
+        tickets.stop();
+        stopped = Promise.all([simulatorStopped, feedStopped]).then(() => undefined);
+      }
+      return stopped;
+    }
+    function shutdown(): Promise<void> {
+      if (!shutdownPromise)
+        shutdownPromise = stop().then(() => {
+          if (closed) return;
+          closed = true;
+          try {
+            read?.close();
+          } finally {
+            write?.close();
+          }
+        });
+      return shutdownPromise;
+    }
     return {
       services,
       confirmation: createConfirmationSigner(
@@ -101,30 +135,15 @@ export function openRuntime(config: Config): Runtime {
       streams,
       simulator,
       start() {
+        if (stopping) return;
         feed.start();
         tickets.start();
         simulator.start();
       },
-      async stop() {
-        await simulator.stop();
-        streams.close();
-        tickets.stop();
-        await feed.stop();
-      },
+      stop,
       checkReady,
-      close() {
-        if (closed) return;
-        closed = true;
-        void simulator.stop();
-        streams.close();
-        tickets.stop();
-        void feed.stop();
-        try {
-          read?.close();
-        } finally {
-          write?.close();
-        }
-      },
+      shutdown,
+      close: shutdown,
     };
   } catch (error) {
     try {

@@ -130,6 +130,29 @@ export function createRefundService(context: ServiceContext) {
     parse(PaiseSchema, input.amountPaise, 'refund amount');
     return input;
   };
+  function executeRefundWithMetadata(
+    input: RefundInput,
+    options?: {
+      expectedPreview?: Presented<ReturnType<typeof refundPreview>>;
+      expectedPreviewHash?: string;
+    },
+  ) {
+    validate(input);
+    return context.mutateWithMetadata(
+      'refund.executeRefund',
+      input,
+      (repos) => {
+        assertExpectedPreview(
+          options?.expectedPreview,
+          () => refundPreview(repos, input),
+          options?.expectedPreviewHash,
+        );
+        const { order, payment } = refundPlan(repos, input);
+        return applyRefund(repos, order, payment, input.amountPaise, input);
+      },
+      decodeRefund,
+    );
+  }
   return {
     previewRefund(input: RefundInput) {
       validate(input);
@@ -146,21 +169,8 @@ export function createRefundService(context: ServiceContext) {
         expectedPreviewHash?: string;
       },
     ) {
-      validate(input);
-      return context.mutate(
-        'refund.executeRefund',
-        input,
-        (repos) => {
-          assertExpectedPreview(
-            options?.expectedPreview,
-            () => refundPreview(repos, input),
-            options?.expectedPreviewHash,
-          );
-          const { order, payment } = refundPlan(repos, input);
-          return applyRefund(repos, order, payment, input.amountPaise, input);
-        },
-        decodeRefund,
-      );
+      return executeRefundWithMetadata(input, options).result;
     },
+    executeRefundWithMetadata,
   };
 }

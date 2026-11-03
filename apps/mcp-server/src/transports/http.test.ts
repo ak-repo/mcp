@@ -185,13 +185,20 @@ function businessHash(): string {
   try {
     const tables = db
       .prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('tool_call_log', 'schema_migrations') ORDER BY name",
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('tool_call_log', 'tool_call_feed_sequence', 'schema_migrations') ORDER BY name",
       )
       .all() as { name: string }[];
     return createHash('sha256')
       .update(
         JSON.stringify(
-          tables.map(({ name }) => [name, db.prepare(`SELECT * FROM "${name}" ORDER BY 1`).all()]),
+          tables.map(({ name }) => [
+            name,
+            db
+              .prepare(
+                `SELECT * FROM "${name}" ${name === 'sqlite_sequence' ? "WHERE name <> 'tool_call_feed_sequence'" : ''} ORDER BY 1`,
+              )
+              .all(),
+          ]),
         ),
       )
       .digest('hex');

@@ -84,6 +84,7 @@ export const ConfigSchema = z.object({
     .default(42),
   SIMULATOR_MAX_ACTIVE: positiveInteger.default(60),
   SIMULATOR: z.enum(['off', 'on']).default('off'),
+  CALL_LOG_RETENTION_DAYS: positiveInteger.pipe(z.number().max(1000000)).default(30),
   CHANGE_FEED_POLL_MS: positiveInteger.pipe(z.number().min(100).max(60000)).default(500),
   SSE_MAX_STREAMS: positiveInteger.pipe(z.number().max(1000)).default(50),
   SSE_REPLAY_LIMIT: positiveInteger.pipe(z.number().max(10000)).default(1000),

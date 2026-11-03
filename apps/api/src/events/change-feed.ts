@@ -25,7 +25,12 @@ export function changeEvent(change: Change): FeedEvent {
     },
   };
 }
-export function createChangeFeed(services: Services, logger: Logger, intervalMs: number) {
+export function createChangeFeed(
+  services: Services,
+  logger: Logger,
+  intervalMs: number,
+  retentionDays = 30,
+) {
   const listeners = new Set<(event: FeedEvent) => void>();
   let changeId = 0;
   let callId = 0;
@@ -65,6 +70,9 @@ export function createChangeFeed(services: Services, logger: Logger, intervalMs:
       }
       if (Date.now() - prunedAt >= 3600000) {
         services.audit.pruneChangesBefore(new Date(Date.now() - 86400000).toISOString());
+        services.audit.pruneCallsBefore(
+          new Date(Date.now() - retentionDays * 86400000).toISOString(),
+        );
         prunedAt = Date.now();
       }
     } catch (error) {

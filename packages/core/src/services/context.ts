@@ -281,6 +281,39 @@ export function createContext(handles: ServiceHandles) {
     }
     const readRepos = repositories(read);
     const writeRepos = repositories(write);
+    function mutateWithMetadata<T>(
+      operation: string,
+      input: { idempotencyKey?: string },
+      execute: (repos: Repositories) => T,
+      decode: (value: unknown) => T,
+    ): { result: Presented<T>; replayed: boolean } {
+      return guard(() => {
+        if (write.inTransaction)
+          throw new AppError(
+            ErrorCode.CONFLICT,
+            'Service writes cannot join a caller-owned transaction',
+            'Call the service outside an existing transaction',
+          );
+        const { idempotencyKey } = input;
+        const hash = requestHash(operation, input);
+        return write
+          .transaction(() => {
+            const replay = cached(writeRepos, operation, input, decode);
+            if (replay !== undefined) return { result: replay, replayed: true };
+            const result = present(execute(writeRepos));
+            if (idempotencyKey !== undefined)
+              writeRepos.audit.insertKey({
+                key: idempotencyKey,
+                operation,
+                request_hash: hash,
+                response_json: canonical(result),
+                created_at: now(),
+              });
+            return { result, replayed: false };
+          })
+          .immediate();
+      });
+    }
     return {
       read<T>(operation: (repos: Repositories) => T): Presented<T> {
         return guard(() => present(read.transaction(() => operation(readRepos)).deferred()));
@@ -294,38 +327,14 @@ export function createContext(handles: ServiceHandles) {
           read.transaction(() => cached(readRepos, operation, input, decode)).deferred(),
         );
       },
+      mutateWithMetadata,
       mutate<T>(
         operation: string,
         input: { idempotencyKey?: string },
         execute: (repos: Repositories) => T,
         decode: (value: unknown) => T,
       ): Presented<T> {
-        return guard(() => {
-          if (write.inTransaction)
-            throw new AppError(
-              ErrorCode.CONFLICT,
-              'Service writes cannot join a caller-owned transaction',
-              'Call the service outside an existing transaction',
-            );
-          const { idempotencyKey } = input;
-          const hash = requestHash(operation, input);
-          return write
-            .transaction(() => {
-              const replay = cached(writeRepos, operation, input, decode);
-              if (replay !== undefined) return replay;
-              const result = present(execute(writeRepos));
-              if (idempotencyKey !== undefined)
-                writeRepos.audit.insertKey({
-                  key: idempotencyKey,
-                  operation,
-                  request_hash: hash,
-                  response_json: canonical(result),
-                  created_at: now(),
-                });
-              return result;
-            })
-            .immediate();
-        });
+        return mutateWithMetadata(operation, input, execute, decode).result;
       },
     };
   });

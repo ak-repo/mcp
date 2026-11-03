@@ -176,6 +176,48 @@ export function createDeliveryService(context: ServiceContext) {
     id(input.orderId);
     id(input.partnerId);
   };
+  function executeReassignWithMetadata(
+    input: ReassignInput,
+    options?: {
+      expectedPreview?: Presented<ReturnType<typeof reassignPreview>>;
+      expectedPreviewHash?: string;
+    },
+  ) {
+    validate(input);
+    return context.mutateWithMetadata(
+      'delivery.executeReassign',
+      input,
+      (repos): ReassignResult => {
+        assertExpectedPreview(
+          options?.expectedPreview,
+          () => reassignPreview(repos, input),
+          options?.expectedPreviewHash,
+        );
+        const { order, delivery, partner, previous } = reassignPlan(repos, input);
+        const updated = DeliverySchema.parse({
+          ...delivery,
+          partner_id: partner.id,
+          status: 'assigned',
+          eta_min: delivery.eta_min ?? DEFAULT_DELIVERY_ETA_MIN,
+          assigned_at: now(),
+        });
+        const available = previous
+          ? DeliveryPartnerSchema.parse({ ...previous, status: 'available' })
+          : null;
+        const busy = DeliveryPartnerSchema.parse({ ...partner, status: 'busy' });
+        if (available) repos.delivery.updatePartner(available);
+        repos.delivery.updatePartner(busy);
+        repos.delivery.update(updated);
+        return {
+          order_id: order.id,
+          delivery: updated,
+          previous_partner: available,
+          partner: busy,
+        };
+      },
+      decodeReassign,
+    );
+  }
   return {
     trackDelivery(orderId: string) {
       id(orderId);
@@ -228,40 +270,8 @@ export function createDeliveryService(context: ServiceContext) {
         expectedPreviewHash?: string;
       },
     ) {
-      validate(input);
-      return context.mutate(
-        'delivery.executeReassign',
-        input,
-        (repos): ReassignResult => {
-          assertExpectedPreview(
-            options?.expectedPreview,
-            () => reassignPreview(repos, input),
-            options?.expectedPreviewHash,
-          );
-          const { order, delivery, partner, previous } = reassignPlan(repos, input);
-          const updated = DeliverySchema.parse({
-            ...delivery,
-            partner_id: partner.id,
-            status: 'assigned',
-            eta_min: delivery.eta_min ?? DEFAULT_DELIVERY_ETA_MIN,
-            assigned_at: now(),
-          });
-          const available = previous
-            ? DeliveryPartnerSchema.parse({ ...previous, status: 'available' })
-            : null;
-          const busy = DeliveryPartnerSchema.parse({ ...partner, status: 'busy' });
-          if (available) repos.delivery.updatePartner(available);
-          repos.delivery.updatePartner(busy);
-          repos.delivery.update(updated);
-          return {
-            order_id: order.id,
-            delivery: updated,
-            previous_partner: available,
-            partner: busy,
-          };
-        },
-        decodeReassign,
-      );
+      return executeReassignWithMetadata(input, options).result;
     },
+    executeReassignWithMetadata,
   };
 }

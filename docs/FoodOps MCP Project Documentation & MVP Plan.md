@@ -100,8 +100,11 @@ All money is stored as **integer paise** (INR). Timestamps are ISO-8601 UTC text
 | `refunds` | id, order\_id, payment\_id, amount\_paise, reason, actor, idempotency\_key (unique), created\_at |
 | `invoices` | id, order\_id (unique), invoice\_no, subtotal\_paise, tax\_paise, fees\_paise, discount\_paise, total\_paise, issued\_at |
 | `tool_call_log` | id, session\_id, tool, args\_json, status, error\_code, latency\_ms, actor, at |
+| `tool_call_feed_sequence` | internal AUTOINCREMENT seq, unique call_id referencing tool_call_log with cascade delete; not an MCP DTO |
 | `change_log` | monotonic id, entity, entity_id, nullable order_id, op (`insert`/`update`), at |
 | `idempotency_keys` | key (primary key), operation, request\_hash (SHA-256), response\_json, created\_at |
+
+Migration `0004_audit_feed_sequence.sql` backfills existing audit row order and captures every audit insertion through a trigger. Its high-water mark survives full retention pruning; MCP DTOs and REST history pagination are unchanged.
 
 Idempotency records are written in the same transaction as the operation they protect. A repeated key returns the stored response only when the operation and request hash match; a mismatched reuse is a `CONFLICT`.
 
@@ -231,25 +234,30 @@ Tokens use HMAC-SHA256 and expire after five minutes. They bind the tool, normal
 
 Auth: `Authorization: Bearer <ADMIN_TOKEN>` on everything except exact `GET /api/health`, `GET /api/ready`, valid CORS preflights, and exact `GET /api/stream`, which requires a short-lived single-use stream ticket. Tokens require 32+ characters without whitespace; compare SHA-256 digests in constant time and reject duplicate Authorization fields. Errors use `{ error: { code, message, hint } }`; shared codes map to their documented HTTP statuses, with API-only `UNAUTHORIZED` (401) and `FORBIDDEN` (403). Internal failures are sanitized and logged only server-side.
 
-The [complete REST reference](api.md) defines all implemented paths, strict query/body schemas, presented money DTOs, pagination, and errors. Operator writes use server-side actor `ops`, body `confirm: true`, and an `Idempotency-Key` header. Previews use distinct `/preview` paths and never write. REST previews are advisory; MCP's signed-token protocol remains separate. Detectable replays return `Idempotency-Replayed: true`. Orders support `q` across ID, customer/restaurant name, and notes; active deliveries include pending unassigned work. Audit reads support exact tool/status filters.
+The [complete REST reference](api.md) defines all implemented paths, strict query/body schemas, presented money DTOs, pagination, and errors. Operator writes use server-side actor `ops`, body `confirmation_token`, and an `Idempotency-Key` header. Previews use distinct `/preview` paths and never write. REST previews are signed and checked transactionally; MCP tokens use a different signature domain. Stored replays return `Idempotency-Replayed: true`. Orders support `q` across ID, customer/restaurant name, and notes; active deliveries include pending unassigned work. Audit reads support exact tool/status filters.
 
 Foundation configuration (process environment overrides workspace `.env`):
 
-| Variable             | Default                 | Meaning                                                                                                   |
-| -------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------- |
-| `DB_PATH`            | `./data/foodops.sqlite` | Existing initialized SQLite file, relative to workspace root.                                             |
-| `API_HOST`           | `127.0.0.1`             | Listener IP address or hostname; proxy headers are never trusted.                                         |
-| `API_PORT`           | `3002`                  | Integer 1–65535.                                                                                          |
-| `ADMIN_TOKEN`        | required                | At least 32 characters without whitespace; separate from MCP authentication.                              |
-| `WEB_ORIGIN`         | `http://localhost:5173` | Comma-separated exact HTTP(S) origins; no wildcards, trailing slash, paths, or credentials.               |
-| `LOG_LEVEL`          | `info`                  | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                          |
-| `SIMULATOR`          | `off`                   | `off` or `on`; `on` starts autonomous synthetic traffic; runtime controls are described in docs/api.md.                               |
-| `CHANGE_FEED_POLL_MS` | `500` | Change-feed polling interval, 100–60000 ms. |
-| `SSE_MAX_STREAMS` | `50` | Concurrent streams, 1–1000. |
-| `SSE_REPLAY_LIMIT` | `1000` | Maximum retained events replayed per connection, 1–10000. |
-| `SIMULATOR_INTERVAL_MS` | `5000` | Base tick interval, 1000–60000 ms; jitter ±10%, clamped to bounds. |
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DB_PATH` | `./data/foodops.sqlite` | Existing initialized SQLite file; relative to workspace root. |
+| `API_HOST` | `127.0.0.1` | Listener host; trustProxy is false. |
+| `API_PORT` | `3002` | Integer 1–65535. |
+| `ADMIN_TOKEN` | `required` | 32+ characters without whitespace; bearer auth. |
+| `API_CONFIRM_SECRET` | `unset` | Optional 32+ characters without whitespace; random per-process when unset/empty. |
+| `WEB_ORIGIN` | `http://localhost:5173` | Comma-separated exact HTTP(S) origins; credentials disabled. |
+| `LOG_LEVEL` | `info` | fatal, error, warn, info, debug, trace, silent. |
+| `RATE_LIMIT_PER_MIN` | `1200` | Positive safe integer; overall per-IP requests/minute. |
+| `RATE_LIMIT_WRITE_PER_MIN` | `60` | Positive safe integer; independent write/preview/simulator bucket. |
+| `RATE_LIMIT_TICKET_PER_MIN` | `60` | Positive safe integer; independent ticket issuance bucket. |
+| `SIMULATOR` | `off` | off or on; explicitly authorized synthetic traffic. |
+| `SIMULATOR_INTERVAL_MS` | `5000` | 1000–60000 ms; jitter ±10%, clamped to bounds. |
 | `SIMULATOR_SEED` | `42` | Unsigned 32-bit deterministic action RNG seed. |
-| `RATE_LIMIT_PER_MIN` | `120`                   | Positive safe integer; per-IP, per-process requests per minute. Write hook uses one quarter, minimum one. |
+| `SIMULATOR_MAX_ACTIVE` | `60` | Positive safe integer; simulator placement admission cap. |
+| `CHANGE_FEED_POLL_MS` | `500` | 100–60000 ms; single non-overlapping poller. |
+| `SSE_MAX_STREAMS` | `50` | 1–1000 concurrent streams. |
+| `SSE_REPLAY_LIMIT` | `1000` | 1–10000 durable change events per reconnect. |
+| `CALL_LOG_RETENTION_DAYS` | `30` | 1–1000000 days; audit history pruned hourly, together with 24-hour change history. |
 
 Helmet headers, exact-origin CORS without credentials, a 100 KB body limit, per-IP global rate limiting, an independent reusable write limiter, and `trustProxy: false` are enabled. Shutdown drains up to ten seconds and closes DB handles after Fastify; timeout exits 1.
 
@@ -465,3 +473,5 @@ Estimates assume one developer, about 13 working days.
 ### Phase 3 review: signed REST approval
 
 REST previews add confirmation_token and expires_at (five minutes). Fresh executes replace confirm with confirmation_token, bound to request and preview state checked transactionally. API_CONFIRM_SECRET is optional, minimum 32 characters without whitespace. REST/MCP signatures use separate channel domains; existing MCP output contracts remain unchanged. Stored REST semantic replays precede token verification after auth/validation. See docs/api.md for the current contract.
+
+Audit history retention is controlled by CALL_LOG_RETENTION_DAYS (default 30). Its feed cursor is monotonic across pruning. Runtime.shutdown() stops and awaits background work, closes streams/tickets, and then closes DB handles; close() returns the same shutdown promise and must be awaited. Close Fastify before disposing an embedded runtime so HTTP handlers can drain.

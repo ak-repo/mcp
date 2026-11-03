@@ -50,7 +50,7 @@ export async function fixture(): Promise<Fixture> {
     businessHash() {
       const tables = write
         .prepare(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('tool_call_log', 'schema_migrations') ORDER BY name",
+          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('tool_call_log', 'tool_call_feed_sequence', 'schema_migrations') ORDER BY name",
         )
         .all() as { name: string }[];
       return createHash('sha256')
@@ -58,7 +58,11 @@ export async function fixture(): Promise<Fixture> {
           JSON.stringify(
             tables.map(({ name }) => [
               name,
-              write.prepare(`SELECT * FROM "${name}" ORDER BY 1`).all(),
+              write
+                .prepare(
+                  `SELECT * FROM "${name}" ${name === 'sqlite_sequence' ? "WHERE name <> 'tool_call_feed_sequence'" : ''} ORDER BY 1`,
+                )
+                .all(),
             ]),
           ),
         )

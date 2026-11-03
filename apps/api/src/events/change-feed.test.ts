@@ -34,6 +34,7 @@ it('does not overlap poll ticks, catches failures and prunes hourly', async () =
     listChangesAfter: changes,
     listCallsAfterRowId: calls,
     pruneChangesBefore: prune,
+    pruneCallsBefore: vi.fn(),
   };
   const feed = createChangeFeed({ audit } as unknown as Services, createLogger('silent'), 500);
   feed.start();
@@ -77,4 +78,26 @@ it('publishes redacted live MCP audit events without a durable SSE id', async ()
   });
   expect(JSON.stringify(events)).not.toContain('secret');
   unsub();
+});
+it('continues emitting live audit calls after all previous rows are pruned', async () => {
+  vi.useFakeTimers();
+  f = fixture();
+  const feed = createChangeFeed(f.runtime.services, createLogger('silent'), 100);
+  const events: unknown[] = [];
+  feed.subscribe((event) => events.push(event));
+  feed.start();
+  const call = {
+    tool: 'get_order',
+    argsJson: '{}',
+    status: 'success' as const,
+    actor: 'ai' as const,
+    latencyMs: 1,
+  };
+  f.runtime.services.audit.recordCall(call);
+  await vi.advanceTimersByTimeAsync(100);
+  f.runtime.services.audit.pruneCallsBefore('2099-01-01T00:00:00.000Z');
+  f.runtime.services.audit.recordCall(call);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(events.filter((event) => (event as { type: string }).type === 'mcp.call')).toHaveLength(2);
+  await feed.stop();
 });

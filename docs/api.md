@@ -9,7 +9,7 @@ Send exactly one `Authorization: Bearer <ADMIN_TOKEN>` header. The configured to
 
 JSON bodies use `Content-Type: application/json` and must not exceed 102400 bytes. Responses are JSON, except SSE streams, successful preflights (204) and HEAD responses (no body). Safe `X-Request-Id` values are echoed; otherwise the server generates a UUID. CORS allows exact configured `WEB_ORIGIN` values with credentials disabled. `Idempotency-Key` is allowed in preflights and `Idempotency-Replayed` is exposed to browser clients. Proxy headers are not trusted.
 
-Global limits apply to all requests. All POST endpoints also consume the separate stricter write bucket (one quarter of `RATE_LIMIT_PER_MIN`, minimum one, per IP per minute). Limits are per process; exceeding one returns 429 and `Retry-After`.
+Overall limits cover auth failures and unknown routes. Writes/previews/simulator POSTs use an independent write bucket; ticket POSTs use the ticket bucket instead. Limits are per IP and process; 429 responses include Retry-After.
 
 ## Endpoint reference
 
@@ -116,7 +116,7 @@ Example page: `{ "data": [], "next_cursor": null }`. Example error:
 {
   "error": {
     "code": "CONFIRMATION_REQUIRED",
-    "message": "Explicit confirmation is required",
+    "message": "Execution requires a valid token for the current preview",
     "hint": "Obtain a fresh preview, show it to the user, obtain explicit approval, then execute with its confirmation_token"
   }
 }
@@ -132,12 +132,12 @@ Example page: `{ "data": [], "next_cursor": null }`. Example error:
 | 404  | NOT_FOUND             | Missing order/restaurant, unissued invoice, or unknown route                                        |
 | 405  | VALIDATION            | Unsupported method; `Allow` lists accepted methods                                                  |
 | 409  | INVALID_TRANSITION    | Illegal advancement, cancellation after pickup, or refund on an ineligible order                    |
-| 409  | CONFLICT              | Idempotency-key mismatch, unavailable partner, or conflicting database state                        |
+| 409  | CONFLICT              | Idempotency-key mismatch, changed signed preview, unavailable partner, or database conflict                        |
 | 413  | LIMIT_EXCEEDED        | Request body exceeds 100 KB                                                                         |
 | 415  | VALIDATION            | Unsupported request media type                                                                      |
 | 422  | LIMIT_EXCEEDED        | Refund exceeds remaining captured balance                                                           |
 | 428  | CONFIRMATION_REQUIRED | Missing, expired, tampered or wrong-arguments token                                                     |
-| 429  | LIMIT_EXCEEDED        | Global/write request rate exceeded; honor `Retry-After`                                             |
+| 429  | LIMIT_EXCEEDED        | Overall/write/ticket rate exceeded; honor `Retry-After`                                             |
 | 500  | INTERNAL              | Unexpected failure; public response excludes internal details, SQL, and stacks                      |
 | 503  | INTERNAL              | Readiness failure or server shutdown                                                                |
 
@@ -166,7 +166,7 @@ const stream = await fetch(`/api/stream?ticket=${encodeURIComponent(issued.ticke
 Successful streams return `text/event-stream`. Frames contain `event`, JSON `data`, and (for database changes) numeric `id` fields, separated by a blank line. Heartbeat comments arrive every 15 seconds. Events are invalidations: refetch authoritative REST data, and treat all text as data.
 
 - `order.updated`, `delivery.updated`, `partner.updated`, `payment.updated`, `invoice.updated`: data `{id, type, order_id, entity, at}`. Refund changes emit `payment.updated` with `entity: "refund"`. An unassigned partner has `order_id: null`; assigned partners emit a row for each active associated order.
-- `mcp.call`: data `{tool, status, error_code, latency_ms, at}`, without args or SSE ID. Audit notifications are live-only; REST `/api/mcp/calls` supplies history.
+- `mcp.call`: data `{tool, status, error_code, latency_ms, at}`, without args or SSE ID. They are not replayed after reconnect. Audit notifications are live-only; REST `/api/mcp/calls` supplies history.
 
 The feed polls every 500 ms by default and sees writes from API, MCP and other SQLite processes. At boot it starts at current maxima. A connection without `Last-Event-ID` receives future changes; one with the header replays retained rows then transitions to live without duplicate durable IDs. Change history is retained for 24 hours and pruned hourly. Invalid cursors produce 400; missing/expired/used tickets produce 401. Unavailable history, future IDs, or replay beyond `SSE_REPLAY_LIMIT` produce 409 `CONFLICT` before streaming: refresh REST state, request a new ticket, and reconnect without the header. Ticket and stream capacity limits produce 429 `LIMIT_EXCEEDED`. The default concurrent-stream limit is 50. Slow consumers are disconnected when their bounded queue fills; reconnect using the last received durable ID. Shutdown ends streams before database handles close.
 
@@ -177,7 +177,7 @@ The feed polls every 500 ms by default and sees writes from API, MCP and other S
 | GET    | `/api/simulator` | Bearer-authenticated configuration and cumulative counters (200).                       |
 | POST   | `/api/simulator` | Bearer-authenticated runtime configuration; strict body `{enabled, interval_ms}` (200). |
 
-`interval_ms` must be an integer from 1000 to 60000; both fields are required on POST. Response: `{enabled, interval_ms, ticks, orders_placed, advanced, cancelled, errors}`. POST uses the write rate limiter. Invalid bodies/unknown fields return 400 `VALIDATION`; auth failures return 401; rate limits return 429.
+`interval_ms` must be an integer from 1000 to 60000; both fields are required on POST. Response: `{enabled, interval_ms, ticks, orders_placed, advanced, cancelled, errors, ticks_waiting_for_partner}`. POST uses the write rate limiter. Invalid bodies/unknown fields return 400 `VALIDATION`; auth failures return 401; rate limits return 429.
 
 ```sh
 curl -H "Authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:3002/api/simulator
@@ -194,3 +194,30 @@ Rate limits are independent per IP: overall `RATE_LIMIT_PER_MIN=1200` (including
 `GET /api/me` validates the UI bearer token. Missing, wrong or duplicate Authorization returns the standard 401 UNAUTHORIZED error; it is not a public health endpoint.
 
 Simulator backlog: `SIMULATOR_MAX_ACTIVE=60` (positive safe integer) prevents simulator placement when all active orders, including failed payments, reach the cap. External writers are not capped. Progression samples oldest untouched candidates per status (`updated_at ASC, id ASC`), excluding failed payments. Status adds `ticks_waiting_for_partner`, counting once per tick where any pickup candidate waits for a partner; other actions may still progress.
+
+## Complete API configuration
+
+Process environment overrides workspace-root `.env`. Empty API_CONFIRM_SECRET means unset. Secrets are never logged.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DB_PATH` | `./data/foodops.sqlite` | Existing initialized SQLite file; relative to workspace root. |
+| `API_HOST` | `127.0.0.1` | Listener host; trustProxy is false. |
+| `API_PORT` | `3002` | Integer 1–65535. |
+| `ADMIN_TOKEN` | `required` | 32+ characters without whitespace; bearer auth. |
+| `API_CONFIRM_SECRET` | `unset` | Optional 32+ characters without whitespace; random per-process when unset/empty. |
+| `WEB_ORIGIN` | `http://localhost:5173` | Comma-separated exact HTTP(S) origins; credentials disabled. |
+| `LOG_LEVEL` | `info` | fatal, error, warn, info, debug, trace, silent. |
+| `RATE_LIMIT_PER_MIN` | `1200` | Positive safe integer; overall per-IP requests/minute. |
+| `RATE_LIMIT_WRITE_PER_MIN` | `60` | Positive safe integer; independent write/preview/simulator bucket. |
+| `RATE_LIMIT_TICKET_PER_MIN` | `60` | Positive safe integer; independent ticket issuance bucket. |
+| `SIMULATOR` | `off` | off or on; explicitly authorized synthetic traffic. |
+| `SIMULATOR_INTERVAL_MS` | `5000` | 1000–60000 ms; jitter ±10%, clamped to bounds. |
+| `SIMULATOR_SEED` | `42` | Unsigned 32-bit deterministic action RNG seed. |
+| `SIMULATOR_MAX_ACTIVE` | `60` | Positive safe integer; simulator placement admission cap. |
+| `CHANGE_FEED_POLL_MS` | `500` | 100–60000 ms; single non-overlapping poller. |
+| `SSE_MAX_STREAMS` | `50` | 1–1000 concurrent streams. |
+| `SSE_REPLAY_LIMIT` | `1000` | 1–10000 durable change events per reconnect. |
+| `CALL_LOG_RETENTION_DAYS` | `30` | 1–1000000 days; audit history pruned hourly, together with 24-hour change history. |
+
+Audit feed sequences are internal; mcp.call has no SSE id and is not replayed after reconnect. REST history pagination is unchanged. Apply migration 0004 before restarting the API against an existing database. No historical migration is edited.

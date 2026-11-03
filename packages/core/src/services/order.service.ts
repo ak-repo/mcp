@@ -177,6 +177,89 @@ export function createOrderService(context: ServiceContext) {
     id(input.orderId);
     return input;
   };
+  function executeCancelWithMetadata(
+    input: OrderWriteInput,
+    options?: {
+      expectedPreview?: Presented<ReturnType<typeof cancellationPreview>>;
+      expectedPreviewHash?: string;
+    },
+  ) {
+    validateCancel(input);
+    return context.mutateWithMetadata(
+      'order.executeCancel',
+      input,
+      (repos) => {
+        assertExpectedPreview(
+          options?.expectedPreview,
+          () => cancellationPreview(repos, input),
+          options?.expectedPreviewHash,
+        );
+        return cancel(repos, input);
+      },
+      decodeOrderMutation,
+    );
+  }
+  function advanceStatusWithMetadata(
+    input: AdvanceInput,
+    options?: {
+      expectedPreview?: Presented<ReturnType<typeof advancePreview>>;
+      expectedPreviewHash?: string;
+    },
+  ) {
+    validateAdvance(input);
+    return context.mutateWithMetadata(
+      'order.advanceStatus',
+      input,
+      (repos): OrderMutationResult => {
+        assertExpectedPreview(
+          options?.expectedPreview,
+          () => advancePreview(repos, input),
+          options?.expectedPreviewHash,
+        );
+        const order = required(repos.order.get(input.orderId), 'Order');
+        assertTransition(order.status, input.toStatus);
+        if (input.toStatus === 'cancelled') return cancel(repos, input);
+        const at = now();
+        const updated = OrderSchema.parse({ ...order, status: input.toStatus, updated_at: at });
+        const delivery = advanceDelivery(repos, updated, at);
+        repos.order.update(updated);
+        const event = OrderEventSchema.parse({
+          id: newId(),
+          order_id: order.id,
+          from_status: order.status,
+          to_status: input.toStatus,
+          actor: input.actor,
+          reason: input.reason,
+          at,
+        });
+        repos.order.insertEvent(event);
+        const payment = paymentFor(repos, order);
+        if (
+          input.toStatus === 'delivered' &&
+          payment?.method === 'cod' &&
+          payment.status === 'pending'
+        ) {
+          repos.payment.update({ ...payment, status: 'paid' });
+        }
+        const invoice =
+          input.toStatus === 'delivered'
+            ? issueInvoice(repos, updated, at)
+            : repos.invoice.forOrder(order.id);
+        return {
+          order: updated,
+          event,
+          payment: paymentFor(repos, order),
+          refund: null,
+          invoice,
+          delivery,
+          partner: delivery?.partner_id
+            ? required(repos.delivery.partner(delivery.partner_id), 'Assigned partner')
+            : null,
+        };
+      },
+      decodeOrderMutation,
+    );
+  }
   return {
     placeOrder(input: PlaceOrderInput) {
       const { idempotencyKey, ...semantic } = parse(
@@ -391,21 +474,9 @@ export function createOrderService(context: ServiceContext) {
         expectedPreviewHash?: string;
       },
     ) {
-      validateCancel(input);
-      return context.mutate(
-        'order.executeCancel',
-        input,
-        (repos) => {
-          assertExpectedPreview(
-            options?.expectedPreview,
-            () => cancellationPreview(repos, input),
-            options?.expectedPreviewHash,
-          );
-          return cancel(repos, input);
-        },
-        decodeOrderMutation,
-      );
+      return executeCancelWithMetadata(input, options).result;
     },
+    executeCancelWithMetadata,
     advanceStatus(
       input: AdvanceInput,
       options?: {
@@ -413,59 +484,8 @@ export function createOrderService(context: ServiceContext) {
         expectedPreviewHash?: string;
       },
     ) {
-      validateAdvance(input);
-      return context.mutate(
-        'order.advanceStatus',
-        input,
-        (repos): OrderMutationResult => {
-          assertExpectedPreview(
-            options?.expectedPreview,
-            () => advancePreview(repos, input),
-            options?.expectedPreviewHash,
-          );
-          const order = required(repos.order.get(input.orderId), 'Order');
-          assertTransition(order.status, input.toStatus);
-          if (input.toStatus === 'cancelled') return cancel(repos, input);
-          const at = now();
-          const updated = OrderSchema.parse({ ...order, status: input.toStatus, updated_at: at });
-          const delivery = advanceDelivery(repos, updated, at);
-          repos.order.update(updated);
-          const event = OrderEventSchema.parse({
-            id: newId(),
-            order_id: order.id,
-            from_status: order.status,
-            to_status: input.toStatus,
-            actor: input.actor,
-            reason: input.reason,
-            at,
-          });
-          repos.order.insertEvent(event);
-          const payment = paymentFor(repos, order);
-          if (
-            input.toStatus === 'delivered' &&
-            payment?.method === 'cod' &&
-            payment.status === 'pending'
-          ) {
-            repos.payment.update({ ...payment, status: 'paid' });
-          }
-          const invoice =
-            input.toStatus === 'delivered'
-              ? issueInvoice(repos, updated, at)
-              : repos.invoice.forOrder(order.id);
-          return {
-            order: updated,
-            event,
-            payment: paymentFor(repos, order),
-            refund: null,
-            invoice,
-            delivery,
-            partner: delivery?.partner_id
-              ? required(repos.delivery.partner(delivery.partner_id), 'Assigned partner')
-              : null,
-          };
-        },
-        decodeOrderMutation,
-      );
+      return advanceStatusWithMetadata(input, options).result;
     },
+    advanceStatusWithMetadata,
   };
 }

@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { ConfigSchema } from '../config.js';
 import { loadConfig } from '../config.js';
 import { TOKEN } from './helpers.js';
 const directories: string[] = [];
@@ -29,6 +31,7 @@ describe('API configuration', () => {
       RATE_LIMIT_WRITE_PER_MIN: 60,
       RATE_LIMIT_TICKET_PER_MIN: 60,
       CHANGE_FEED_POLL_MS: 500,
+      CALL_LOG_RETENTION_DAYS: 30,
       SSE_MAX_STREAMS: 50,
       SSE_REPLAY_LIMIT: 1000,
       SIMULATOR_INTERVAL_MS: 5000,
@@ -72,6 +75,8 @@ describe('API configuration', () => {
     ['LOG_LEVEL', 'verbose'],
     ['SIMULATOR', 'true'],
     ['SIMULATOR_MAX_ACTIVE', '0'],
+    ['CALL_LOG_RETENTION_DAYS', '0'],
+    ['CALL_LOG_RETENTION_DAYS', '1000001'],
     ['CHANGE_FEED_POLL_MS', '99'],
     ['CHANGE_FEED_POLL_MS', '60001'],
     ['SSE_MAX_STREAMS', '0'],
@@ -114,4 +119,10 @@ it('accepts simulator startup and bounded live-update configuration', () => {
       env: { ADMIN_TOKEN: TOKEN, SIMULATOR: 'on', SIMULATOR_SEED: '0', SSE_REPLAY_LIMIT: '10000' },
     }),
   ).toMatchObject({ SIMULATOR: 'on', SIMULATOR_SEED: 0, SSE_REPLAY_LIMIT: 10000 });
+});
+
+it('documents every API environment variable', () => {
+  const documentation = readFileSync(new URL('../../../../docs/api.md', import.meta.url), 'utf8');
+  for (const key of Object.keys(ConfigSchema.shape))
+    expect(documentation).toContain('`' + key + '`');
 });

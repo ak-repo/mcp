@@ -62,6 +62,15 @@ export function createAuditService(context: ServiceContext) {
         (value) => Number(value),
       );
     },
+    pruneCallsBefore(iso: string) {
+      const at = parse(TimestampSchema, iso, 'retention timestamp');
+      return context.mutate(
+        'audit.pruneCallsBefore',
+        { at } as { at: string; idempotencyKey?: string },
+        (repos) => repos.audit.pruneCalls(at),
+        (value) => Number(value),
+      );
+    },
     recordCall(input: AuditInput) {
       keys(input, [
         'sessionId',

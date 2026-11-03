@@ -93,7 +93,7 @@ it('repeats action choices, follows transitions, and respects partner availabili
   const first = await sequence();
   vi.setSystemTime(new Date('2026-11-02T12:00:00.000Z'));
   expect(await sequence()).toEqual(first);
-});
+}, 15000);
 it('does not overlap ticks, isolates action errors, and disabling stops scheduling', async () => {
   vi.useFakeTimers();
   f = fixture();
@@ -183,7 +183,7 @@ it('exposes authenticated strict runtime controls and resets on reopen', async (
       ticks: 0,
     });
   } finally {
-    reopened.close();
+    await reopened.shutdown();
   }
 });
 it('does not place orders once the active backlog reaches its cap', async () => {

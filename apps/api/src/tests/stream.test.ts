@@ -108,6 +108,8 @@ it('enforces stream limits and closes active streams on shutdown', async () => {
   expect(second.response.status).toBe(429);
   await f.app.close();
   expect((await reader.read()).done).toBe(true);
+  await f.runtime.shutdown();
+  expect(f.logs.filter((line) => /"level":(40|50|60)/.test(line))).toEqual([]);
 });
 it('rejects replay outside retention or beyond the cap', async () => {
   await f.close();

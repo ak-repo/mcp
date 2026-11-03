@@ -7,15 +7,27 @@ export function createTickets(now: () => number = Date.now) {
   function sweep() {
     for (const [key, value] of entries) if (value.expires <= now()) entries.delete(key);
   }
+  let stopped = false;
+  function ensureActive() {
+    if (stopped)
+      throw new HttpError(
+        503,
+        ErrorCode.INTERNAL,
+        'Stream ticket service is stopping',
+        'Retry after the API restarts',
+      );
+  }
   let timer: ReturnType<typeof setInterval> | undefined;
   return {
     start() {
+      if (stopped) return;
       if (!timer) {
         timer = setInterval(sweep, 1000);
         timer.unref();
       }
     },
     issue() {
+      ensureActive();
       sweep();
       if (entries.size >= 10000)
         throw new HttpError(
@@ -31,6 +43,7 @@ export function createTickets(now: () => number = Date.now) {
       return { ticket, expires_at: new Date(expires).toISOString() };
     },
     consume(ticket: string) {
+      ensureActive();
       sweep();
       const digest = hash(ticket);
       const key = digest.toString('hex');
@@ -49,6 +62,7 @@ export function createTickets(now: () => number = Date.now) {
       entries.delete(key);
     },
     stop() {
+      stopped = true;
       if (timer) clearInterval(timer);
       timer = undefined;
       entries.clear();

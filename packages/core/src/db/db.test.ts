@@ -236,7 +236,13 @@ describe('numbered migrations', () => {
       .all()
       .map((row) => row.name);
     expect(tables).toEqual(
-      [...Object.keys(rows), 'schema_migrations', 'change_log', 'sqlite_sequence'].sort(),
+      [
+        ...Object.keys(rows),
+        'schema_migrations',
+        'change_log',
+        'sqlite_sequence',
+        'tool_call_feed_sequence',
+      ].sort(),
     );
     const indexes = db
       .prepare<[], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -526,4 +532,25 @@ it('preserves operational invariants after placing and cancelling a live order o
   expect(() =>
     checkSeedInvariants(db, { operational: true, now: '2026-11-03T00:00:00.000Z' }),
   ).not.toThrow();
+});
+it('upgrades an existing seeded v3 database to a durable audit feed sequence', () => {
+  const path = migrationDirectory();
+  for (const name of ['0002_integrity.sql', '0003_change_log.sql'])
+    copyFileSync(join(DEFAULT_MIGRATIONS_DIRECTORY, name), join(path, name));
+  migrate(db, path);
+  db.transaction(() => insertSeedData(db, createSeedData()))();
+  insert(db, 'tool_call_log', rows.tool_call_log!);
+  const before = checkSeedInvariants(db).contentHash;
+  const name = '0004_audit_feed_sequence.sql';
+  copyFileSync(join(DEFAULT_MIGRATIONS_DIRECTORY, name), join(path, name));
+  expect(migrate(db, path)).toEqual([name]);
+  expect(checkSeedInvariants(db).contentHash).toBe(before);
+  expect(db.prepare('SELECT seq, call_id FROM tool_call_feed_sequence').all()).toEqual([
+    { seq: 1, call_id: 'T-1' },
+  ]);
+  db.prepare('DELETE FROM tool_call_log').run();
+  insert(db, 'tool_call_log', { ...rows.tool_call_log!, id: 'T-2' });
+  expect(db.prepare('SELECT seq FROM tool_call_feed_sequence').get()).toEqual({ seq: 2 });
+  writeFileSync(join(path, name), readFileSync(join(path, name), 'utf8') + '\n-- tampered');
+  expect(() => migrate(db, path)).toThrow(/changed/);
 });
