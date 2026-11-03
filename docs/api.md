@@ -32,10 +32,10 @@ All domain successes, including writes and replays, use HTTP 200. Paths are case
 | POST    | `/api/orders/:id/cancel/preview`            | `{ reason }`                                                                          | `CancelPreview`           | `order.previewCancel`           | 200     |
 | POST    | `/api/orders/:id/refund/preview`            | `{ reason, amount_paise }`                                                            | `RefundPreview`           | `refund.previewRefund`          | 200     |
 | POST    | `/api/deliveries/:orderId/reassign/preview` | `{ reason, partner_id }`                                                              | `ReassignPreview`         | `delivery.previewReassign`      | 200     |
-| POST    | `/api/orders/:id/advance`                   | `{ reason, to_status, confirm: true }`                                                | `OrderMutationResult`     | `order.advanceStatus`           | 200     |
-| POST    | `/api/orders/:id/cancel`                    | `{ reason, confirm: true }`                                                           | `OrderMutationResult`     | `order.executeCancel`           | 200     |
-| POST    | `/api/orders/:id/refund`                    | `{ reason, amount_paise, confirm: true }`                                             | `RefundResult`            | `refund.executeRefund`          | 200     |
-| POST    | `/api/deliveries/:orderId/reassign`         | `{ reason, partner_id, confirm: true }`                                               | `ReassignResult`          | `delivery.executeReassign`      | 200     |
+| POST    | `/api/orders/:id/advance`                   | `{ reason, to_status, confirmation_token }`                                                | `OrderMutationResult`     | `order.advanceStatus`           | 200     |
+| POST    | `/api/orders/:id/cancel`                    | `{ reason, confirmation_token }`                                                           | `OrderMutationResult`     | `order.executeCancel`           | 200     |
+| POST    | `/api/orders/:id/refund`                    | `{ reason, amount_paise, confirmation_token }`                                             | `RefundResult`            | `refund.executeRefund`          | 200     |
+| POST    | `/api/deliveries/:orderId/reassign`         | `{ reason, partner_id, confirmation_token }`                                               | `ReassignResult`          | `delivery.executeReassign`      | 200     |
 | OPTIONS | `*`                                         | Valid Origin + Access-Control-Request-Method; optional Access-Control-Request-Headers | Empty preflight response  | CORS plugin                     | 204     |
 
 `GET /api/ready` returns 503 when its core read fails. MCP connectivity checks, the MCP tool catalog, chat and providers remain deferred. SSE and simulator endpoints are documented below.
@@ -82,12 +82,12 @@ Names, notes, and audit arguments are untrusted plain data. A note containing an
 
 ## Operator write flow
 
-1. Read the order/assignment, then POST to its `/preview` endpoint with the operation fields and reason. Preview is a successful read with no DB changes. It requires neither a key nor confirmation; `confirm`, `actor`, and body idempotency fields are rejected.
-2. Show the preview to the operator. The preview's `requiresConfirmation` and `requiresPaymentConfirmation` are domain advisory flags; **every REST execute requires `confirm: true`**, regardless of their values.
-3. Execute using the same operation fields/reason, `confirm: true`, and one `Idempotency-Key` header matching `[A-Za-z0-9._:-]{8,128}`. Actor is always set to `ops` on the server.
-4. Retry failures using the same key and identical semantic request. A detectable stored replay returns the identical original body with `Idempotency-Replayed: true`; fresh writes omit the header. Same key with different fields, reason, order, or operation returns 409 CONFLICT. Keys share the core's global namespace, including MCP requests.
+1. POST the operation fields and reason to `/preview`; no idempotency key is needed. The flat preview adds `confirmation_token` and `expires_at`. No rows are written.
+2. Show the preview to the operator and obtain explicit approval. Domain confirmation flags are advisory; every new REST mutation needs a signed token.
+3. Execute with exactly the same fields/reason and `confirmation_token`, plus one `Idempotency-Key` header matching `[A-Za-z0-9._:-]{8,128}`. Actor is always server-assigned `ops`; obsolete `confirm` and injected `actor` fields are rejected.
+4. Retry using the same semantic request and key. After auth/strict validation, matching stored requests return the original body and `Idempotency-Replayed: true` before token verification, even with an expired, missing or invalid token. Different semantic fields/operation/order with the same key return 409. Tokens and keys are not semantic request fields.
 
-Previews are advisory snapshots. REST execution does not use MCP tokens or require a recorded preview; current state is checked transactionally at execution. The host/operator is responsible for explicit approval. Replayed execute requests still require auth, a valid key, and `confirm: true`. A concurrent process can cause replay inside core after the preliminary lookup; absence of the replay header does not prove a fresh write.
+Tokens last five minutes and bind the channel, operation, order, fields, and canonical preview. The current preview is checked transactionally before effects. Invalid/expired/wrong-arguments tokens return 428; changed state returns 409 with hint "Re-run the preview and confirm again". REST and MCP tokens are not interchangeable even with the same secret. Set API_CONFIRM_SECRET for stable multi-process REST verification; otherwise restart invalidates pending tokens. Hosts still enforce explicit operator approval.
 
 Cancellation is allowed only before pickup and atomically refunds remaining captured payment, cancels nonterminal delivery work, and frees its busy partner when no other active delivery owns it. Refunds are allowed on delivered/cancelled orders and cannot exceed paid minus refunded. Reassignment requires a pre-pickup order and an available partner. Invalid transitions are 409; refund balance limits are 422.
 
@@ -105,7 +105,7 @@ curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: applicati
 # After reviewing the preview and receiving operator approval:
 curl -i -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: ops-cancel-example-0001' \
-  -d '{"reason":"Customer requested cancellation","confirm":true}' \
+  -d '{"reason":"Customer requested cancellation","confirmation_token":"<token from preview>"}' \
   http://127.0.0.1:3002/api/orders/O-EDGE-UNASSIGNED/cancel
 ```
 
@@ -116,7 +116,7 @@ Example page: `{ "data": [], "next_cursor": null }`. Example error:
   "error": {
     "code": "CONFIRMATION_REQUIRED",
     "message": "Explicit confirmation is required",
-    "hint": "Review the preview with the user, then submit confirm: true to this execute endpoint"
+    "hint": "Obtain a fresh preview, show it to the user, obtain explicit approval, then execute with its confirmation_token"
   }
 }
 ```
@@ -135,7 +135,7 @@ Example page: `{ "data": [], "next_cursor": null }`. Example error:
 | 413  | LIMIT_EXCEEDED        | Request body exceeds 100 KB                                                                         |
 | 415  | VALIDATION            | Unsupported request media type                                                                      |
 | 422  | LIMIT_EXCEEDED        | Refund exceeds remaining captured balance                                                           |
-| 428  | CONFIRMATION_REQUIRED | Execute has no confirmation or `confirm: false`                                                     |
+| 428  | CONFIRMATION_REQUIRED | Missing, expired, tampered or wrong-arguments token                                                     |
 | 429  | LIMIT_EXCEEDED        | Global/write request rate exceeded; honor `Retry-After`                                             |
 | 500  | INTERNAL              | Unexpected failure; public response excludes internal details, SQL, and stacks                      |
 | 503  | INTERNAL              | Readiness failure or server shutdown                                                                |
@@ -185,3 +185,5 @@ curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: applicati
 ```
 
 Simulator activity is explicitly enabled autonomous synthetic traffic, with actor `system`; it does not interpret order notes. It is off by default. Each jittered tick may place one order and processes up to three orders, with a 5% pre-pickup cancellation chance per selected order. It skips failed payments, assigns available partners before pickup, and uses the normal core transactions, pricing, invoices and cancellation/refund rules. Disabling waits for the current tick and stops future scheduling. Errors are logged/counted independently. Runtime controls and counters are in memory: restart restores environment defaults and continues existing database orders; no duplicate startup loop is created.
+
+REST confirmation config: `API_CONFIRM_SECRET` defaults to unset (random per-process), or must have at least 32 characters without whitespace. The signature domain changes on this deployment; previously issued MCP preview tokens must be refreshed.

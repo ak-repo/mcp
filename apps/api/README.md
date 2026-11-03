@@ -67,7 +67,7 @@ Exact versions were selected against the 2026-10-18 publication cutoff (14 days 
 
 ## REST writes
 
-Read and show the preview to the operator, then execute with `confirm: true` and one `Idempotency-Key` header (8–128 safe characters). The actor is always server-assigned `ops`. REST confirmation is an operator contract; previews are advisory and are not token-bound. MCP retains its separate signed-token protocol. Replays return the original result; `Idempotency-Replayed: true` is set when detectable. See [docs/api.md](../../docs/api.md) for the full contract and cross-process detection limits.
+Read and show the preview to the operator, then execute with `confirmation_token` and one `Idempotency-Key` header (8–128 safe characters). The actor is always server-assigned `ops`. REST tokens bind the request and preview state; hosts enforce operator approval. MCP uses a separate signature domain. Replays return the original result; `Idempotency-Replayed: true` is set when detectable. See [docs/api.md](../../docs/api.md) for the full contract and cross-process detection limits.
 
 ### Live updates and simulator
 
@@ -82,3 +82,5 @@ Use `POST /api/stream/ticket` with bearer auth, then `GET /api/stream?ticket=...
 | `SIMULATOR_SEED`        | 42      | Unsigned 32-bit action seed                  |
 
 `SIMULATOR=off` is the default. With `on`, synthetic actions use core services as `system`. GET/POST `/api/simulator` reports statistics and changes runtime settings; restart restores environment defaults. Run `pnpm smoke:api` after building to exercise SSE and REST cancellation on an isolated temporary seed.
+
+REST operations now require preview → explicit operator approval → execute with `confirmation_token` and Idempotency-Key. Previews add a token and five-minute expiry; the old confirm field is rejected. REST/MCP tokens are channel-separated. `API_CONFIRM_SECRET` is optional (32+ characters, no whitespace); unset uses a random process-local key. A stored semantic replay is returned before token verification, after auth and strict validation.

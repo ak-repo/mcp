@@ -141,14 +141,21 @@ export function createRefundService(context: ServiceContext) {
     },
     executeRefund(
       input: RefundInput,
-      options?: { expectedPreview?: Presented<ReturnType<typeof refundPreview>> },
+      options?: {
+        expectedPreview?: Presented<ReturnType<typeof refundPreview>>;
+        expectedPreviewHash?: string;
+      },
     ) {
       validate(input);
       return context.mutate(
         'refund.executeRefund',
         input,
         (repos) => {
-          assertExpectedPreview(options?.expectedPreview, () => refundPreview(repos, input));
+          assertExpectedPreview(
+            options?.expectedPreview,
+            () => refundPreview(repos, input),
+            options?.expectedPreviewHash,
+          );
           const { order, payment } = refundPlan(repos, input);
           return applyRefund(repos, order, payment, input.amountPaise, input);
         },

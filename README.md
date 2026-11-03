@@ -73,3 +73,5 @@ Use `POST /api/stream/ticket` with bearer auth, then `GET /api/stream?ticket=...
 | `SIMULATOR_SEED`        | 42      | Unsigned 32-bit action seed                  |
 
 `SIMULATOR=off` is the default. With `on`, synthetic actions use core services as `system`. GET/POST `/api/simulator` reports statistics and changes runtime settings; restart restores environment defaults. Run `pnpm smoke:api` after building to exercise SSE and REST cancellation on an isolated temporary seed.
+
+REST operations now require preview → explicit operator approval → execute with `confirmation_token` and Idempotency-Key. Previews add a token and five-minute expiry; the old confirm field is rejected. REST/MCP tokens are channel-separated. `API_CONFIRM_SECRET` is optional (32+ characters, no whitespace); unset uses a random process-local key. A stored semantic replay is returned before token verification, after auth and strict validation.

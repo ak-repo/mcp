@@ -223,14 +223,21 @@ export function createDeliveryService(context: ServiceContext) {
     },
     executeReassign(
       input: ReassignInput,
-      options?: { expectedPreview?: Presented<ReturnType<typeof reassignPreview>> },
+      options?: {
+        expectedPreview?: Presented<ReturnType<typeof reassignPreview>>;
+        expectedPreviewHash?: string;
+      },
     ) {
       validate(input);
       return context.mutate(
         'delivery.executeReassign',
         input,
         (repos): ReassignResult => {
-          assertExpectedPreview(options?.expectedPreview, () => reassignPreview(repos, input));
+          assertExpectedPreview(
+            options?.expectedPreview,
+            () => reassignPreview(repos, input),
+            options?.expectedPreviewHash,
+          );
           const { order, delivery, partner, previous } = reassignPlan(repos, input);
           const updated = DeliverySchema.parse({
             ...delivery,

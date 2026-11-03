@@ -55,6 +55,14 @@ export const ConfigSchema = z.object({
     .min(1)
     .refine((value) => value !== ':memory:' && !value.includes('\0'))
     .default('./data/foodops.sqlite'),
+  API_CONFIRM_SECRET: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z
+      .string()
+      .min(32)
+      .refine((value) => !/\s/.test(value))
+      .optional(),
+  ),
   API_HOST: host.default('127.0.0.1'),
   API_PORT: positiveInteger.pipe(z.number().max(65535)).default(3002),
   ADMIN_TOKEN: z

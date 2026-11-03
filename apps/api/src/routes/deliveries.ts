@@ -18,10 +18,11 @@ import {
   ReassignBodySchema,
   ReassignExecuteSchema,
   responseSchema,
+  confirmedPreview,
 } from './schemas.js';
 const deliveries: FastifyPluginAsync<{ runtime: Runtime }> = async (
   app,
-  { runtime: { services } },
+  { runtime: { services, confirmation } },
 ) => {
   app.get<{ Reply: z.output<typeof DeliveryPageSchema> }>(
     '/deliveries',
@@ -48,19 +49,27 @@ const deliveries: FastifyPluginAsync<{ runtime: Runtime }> = async (
       return pageResponse(services.delivery.listDeliveryPartners(defined(query)));
     },
   );
-  app.post<{ Reply: z.output<typeof ReassignPreviewSchema> }>(
+  app.post<{ Reply: z.output<ReturnType<typeof confirmedPreview<typeof ReassignPreviewSchema>>> }>(
     '/deliveries/:orderId/reassign/preview',
-    { preHandler: app.writeRateLimit, schema: responseSchema(ReassignPreviewSchema) },
+    {
+      preHandler: app.writeRateLimit,
+      schema: responseSchema(confirmedPreview(ReassignPreviewSchema)),
+    },
     async (request) => {
       const { orderId } = validate(OrderIdParamsSchema, request.params);
       validate(EmptyQuerySchema, request.query);
       const body = validate(ReassignBodySchema, request.body);
-      return services.delivery.previewReassign({
+      const input = {
         orderId,
-        actor: 'ops',
+        actor: 'ops' as const,
         reason: body.reason,
         partnerId: body.partner_id,
-      });
+      };
+      const preview = services.delivery.previewReassign(input);
+      return {
+        ...preview,
+        ...confirmation.sign({ channel: 'rest', operation: 'reassign', args: input, preview }),
+      };
     },
   );
   app.post<{ Reply: z.output<typeof ReassignResultSchema> }>(
@@ -81,6 +90,8 @@ const deliveries: FastifyPluginAsync<{ runtime: Runtime }> = async (
         }),
         services.delivery.replayReassign,
         services.delivery.executeReassign,
+        confirmation,
+        'reassign',
       );
     },
   );

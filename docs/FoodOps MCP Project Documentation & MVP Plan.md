@@ -461,3 +461,7 @@ Estimates assume one developer, about 13 working days.
 - Role-based access in the dashboard.
 - Eval suite: scripted prompts scored on tool selection and argument accuracy across models.
 - Additional adapters (Gemini native, Bedrock) behind the same interface.
+
+### Phase 3 review: signed REST approval
+
+REST previews add confirmation_token and expires_at (five minutes). Fresh executes replace confirm with confirmation_token, bound to request and preview state checked transactionally. API_CONFIRM_SECRET is optional, minimum 32 characters without whitespace. REST/MCP signatures use separate channel domains; existing MCP output contracts remain unchanged. Stored REST semantic replays precede token verification after auth/validation. See docs/api.md for the current contract.

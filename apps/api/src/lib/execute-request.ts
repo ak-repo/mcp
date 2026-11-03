@@ -1,3 +1,4 @@
+import { confirmationRequired, type ConfirmationSigner } from '@foodops/core';
 import { AppError, ErrorCode } from '@foodops/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -11,7 +12,9 @@ export function executeRequest<S extends z.ZodType, I, R>(
   schema: S,
   toInput: (body: z.output<S>, key: string) => I,
   replay: (input: I) => R | undefined,
-  execute: (input: I) => R,
+  execute: (input: I, options: { expectedPreviewHash: string }) => R,
+  confirmation: ConfirmationSigner,
+  operation: string,
 ): R {
   validate(EmptyQuerySchema, request.query);
   let count = 0;
@@ -25,17 +28,20 @@ export function executeRequest<S extends z.ZodType, I, R>(
     );
   const key = validate(IdempotencyHeaderSchema, request.headers['idempotency-key']);
   const body = validate(schema, request.body);
-  if (!(body !== null && typeof body === 'object' && 'confirm' in body && body.confirm === true))
-    throw new AppError(
-      ErrorCode.CONFIRMATION_REQUIRED,
-      'Explicit confirmation is required',
-      'Review the preview with the user, then submit confirm: true to this execute endpoint',
-    );
   const input = toInput(body, key);
   const cached = replay(input);
   if (cached !== undefined) {
     reply.header('Idempotency-Replayed', 'true');
     return cached;
   }
-  return execute(input);
+  const token =
+    body !== null && typeof body === 'object' && 'confirmation_token' in body
+      ? body.confirmation_token
+      : undefined;
+  if (typeof token !== 'string' || !token) throw confirmationRequired();
+  const args = Object.fromEntries(
+    Object.entries(input as Record<string, unknown>).filter(([key]) => key !== 'idempotencyKey'),
+  );
+  const claims = confirmation.verifyRequest(token, { channel: 'rest', operation, args });
+  return execute(input, { expectedPreviewHash: claims.preview });
 }

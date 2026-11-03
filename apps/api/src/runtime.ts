@@ -3,7 +3,12 @@ import { createChangeFeed, type ChangeFeed } from './events/change-feed.js';
 import { createTickets } from './events/tickets.js';
 import { createStreams } from './events/streams.js';
 import { statSync } from 'node:fs';
-import { createServices, type Services } from '@foodops/core';
+import {
+  createConfirmationSigner,
+  type ConfirmationSigner,
+  createServices,
+  type Services,
+} from '@foodops/core';
 import { openReadOnly, openWritable, type DatabaseConnection } from '@foodops/core/db/connection';
 import { AppError, ErrorCode } from '@foodops/shared';
 import pino, { type Logger, type DestinationStream } from 'pino';
@@ -11,6 +16,7 @@ import type { Config } from './config.js';
 
 export interface Runtime {
   services: Services;
+  confirmation: ConfirmationSigner;
   simulator: Simulator;
   feed: ChangeFeed;
   tickets: ReturnType<typeof createTickets>;
@@ -38,6 +44,10 @@ export function createLogger(
           'headers.authorization',
           'req.headers.authorization',
           'config.ADMIN_TOKEN',
+          'API_CONFIRM_SECRET',
+          'config.API_CONFIRM_SECRET',
+          'confirmation_token',
+          '*.confirmation_token',
         ],
         censor: '[REDACTED]',
       },
@@ -81,6 +91,9 @@ export function openRuntime(config: Config): Runtime {
     let closed = false;
     return {
       services,
+      confirmation: createConfirmationSigner(
+        config.API_CONFIRM_SECRET ? { secret: config.API_CONFIRM_SECRET } : {},
+      ),
       logger,
       feed,
       tickets,

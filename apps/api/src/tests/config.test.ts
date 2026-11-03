@@ -21,6 +21,7 @@ describe('API configuration', () => {
       ADMIN_TOKEN: TOKEN,
       API_HOST: '127.0.0.1',
       API_PORT: 3002,
+      API_CONFIRM_SECRET: undefined,
       WEB_ORIGIN: ['http://localhost:5173'],
       LOG_LEVEL: 'info',
       SIMULATOR: 'off',

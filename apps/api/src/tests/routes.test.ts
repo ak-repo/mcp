@@ -1,6 +1,7 @@
+import { createConfirmationSigner } from '@foodops/core';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import type { LightMyRequestResponse } from 'fastify';
 import { openReadOnly } from '@foodops/core/db/connection';
@@ -28,6 +29,7 @@ beforeEach(() => {
   f = fixture({ RATE_LIMIT_PER_MIN: 1000 });
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   await f.close();
 });
 function hash(): string {
@@ -51,6 +53,16 @@ async function get<S extends z.ZodType>(url: string, schema: S): Promise<z.outpu
   const response = await f.app.inject({ url, headers: AUTH });
   expect(response.statusCode, response.body).toBe(200);
   return schema.parse(response.json());
+}
+async function token(url: string, body: Record<string, unknown>): Promise<string> {
+  const response = await f.app.inject({
+    method: 'POST',
+    url: url + '/preview',
+    headers: AUTH,
+    payload: body,
+  });
+  expect(response.statusCode, response.body).toBe(200);
+  return response.json().confirmation_token as string;
 }
 function operation(name: string) {
   const assigned = f.runtime.services.delivery.listDeliveries({ status: 'assigned', limit: 50 })
@@ -300,13 +312,19 @@ describe.each(['advance', 'cancel', 'refund', 'reassign'])('%s write flow', (nam
       payload: op.body,
     });
     expect(preview.statusCode, preview.body).toBe(200);
-    op.preview.parse(preview.json());
+    op.preview.parse(
+      Object.fromEntries(
+        Object.entries(preview.json()).filter(
+          ([key]) => !['confirmation_token', 'expires_at'].includes(key),
+        ),
+      ),
+    );
     expect(hash()).toBe(before);
     const first = await f.app.inject({
       method: 'POST',
       url: op.url,
       headers: keyHeaders,
-      payload: { ...op.body, confirm: true },
+      payload: { ...op.body, confirmation_token: preview.json().confirmation_token },
     });
     expect(first.statusCode, first.body).toBe(200);
     op.result.parse(first.json());
@@ -317,7 +335,7 @@ describe.each(['advance', 'cancel', 'refund', 'reassign'])('%s write flow', (nam
       method: 'POST',
       url: op.url,
       headers: keyHeaders,
-      payload: { ...op.body, confirm: true },
+      payload: { ...op.body, confirmation_token: preview.json().confirmation_token },
     });
     expect(replay.statusCode, replay.body).toBe(200);
     expect(replay.json()).toEqual(first.json());
@@ -327,7 +345,11 @@ describe.each(['advance', 'cancel', 'refund', 'reassign'])('%s write flow', (nam
       method: 'POST',
       url: op.url,
       headers: keyHeaders,
-      payload: { ...op.body, reason: 'Changed', confirm: true },
+      payload: {
+        ...op.body,
+        reason: 'Changed',
+        confirmation_token: preview.json().confirmation_token,
+      },
     });
     expect(conflict.statusCode).toBe(409);
     expect(conflict.json().error.code).toBe('CONFLICT');
@@ -336,7 +358,7 @@ describe.each(['advance', 'cancel', 'refund', 'reassign'])('%s write flow', (nam
     if ('event' in result) expect(result.event.actor).toBe('ops');
     if ('refund' in result && result.refund !== null) expect(result.refund.actor).toBe('ops');
   });
-  it('requires exactly one valid key and explicit boolean approval', async () => {
+  it('requires exactly one valid key and a confirmation token', async () => {
     const op = operation(name);
     const before = hash();
     for (const headers of [
@@ -349,7 +371,7 @@ describe.each(['advance', 'cancel', 'refund', 'reassign'])('%s write flow', (nam
         method: 'POST',
         url: op.url,
         headers,
-        payload: { ...op.body, confirm: true },
+        payload: { ...op.body, confirmation_token: await token(op.url, op.body) },
       });
       expect(response.statusCode).toBe(400);
       expect(response.json().error.code).toBe('VALIDATION');
@@ -364,16 +386,19 @@ describe.each(['advance', 'cancel', 'refund', 'reassign'])('%s write flow', (nam
           method: 'POST',
           url: op.url,
           headers: duplicate,
-          payload: { ...op.body, confirm: true },
+          payload: { ...op.body, confirmation_token: await token(op.url, op.body) },
         })
       ).statusCode,
     ).toBe(400);
-    for (const confirm of [undefined, false]) {
+    for (const confirmation_token of [undefined, '']) {
       const response = await f.app.inject({
         method: 'POST',
         url: op.url,
         headers: keyHeaders,
-        payload: { ...op.body, ...(confirm === undefined ? {} : { confirm }) },
+        payload: {
+          ...op.body,
+          ...(confirmation_token === undefined ? {} : { confirmation_token }),
+        },
       });
       expect(response.statusCode).toBe(428);
       expect(response.json().error.code).toBe('CONFIRMATION_REQUIRED');
@@ -384,7 +409,7 @@ describe.each(['advance', 'cancel', 'refund', 'reassign'])('%s write flow', (nam
           method: 'POST',
           url: op.url,
           headers: keyHeaders,
-          payload: { ...op.body, confirm: 'true' },
+          payload: { ...op.body, confirm: true },
         })
       ).statusCode,
     ).toBe(400);
@@ -421,6 +446,115 @@ describe.each(['advance', 'cancel', 'refund', 'reassign'])('%s write flow', (nam
     ).toBe(400);
     expect(hash()).toBe(before);
   });
+});
+describe.each(['advance', 'cancel', 'refund', 'reassign'])('%s signed preview', (name) => {
+  it('rejects tampering, expiry, changed arguments and the old confirm field', async () => {
+    const op = operation(name);
+    const approval = await token(op.url, op.body);
+    for (const payload of [
+      { ...op.body, confirmation_token: approval + 'x' },
+      { ...op.body, reason: 'Different reason', confirmation_token: approval },
+    ]) {
+      expect(
+        (await f.app.inject({ method: 'POST', url: op.url, headers: keyHeaders, payload }))
+          .statusCode,
+      ).toBe(428);
+    }
+    expect(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: op.url,
+          headers: keyHeaders,
+          payload: { ...op.body, confirm: true },
+        })
+      ).statusCode,
+    ).toBe(400);
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + 300001);
+    expect(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: op.url,
+          headers: keyHeaders,
+          payload: { ...op.body, confirmation_token: approval },
+        })
+      ).statusCode,
+    ).toBe(428);
+  });
+  it('rejects changed state but replays a committed request before checking its token', async () => {
+    const op = operation(name);
+    const approval = await token(op.url, op.body);
+    const first = await f.app.inject({
+      method: 'POST',
+      url: op.url,
+      headers: keyHeaders,
+      payload: { ...op.body, confirmation_token: approval },
+    });
+    expect(first.statusCode, first.body).toBe(200);
+    const stale = await f.app.inject({
+      method: 'POST',
+      url: op.url,
+      headers: { ...AUTH, 'idempotency-key': 'different-key-0001' },
+      payload: { ...op.body, confirmation_token: approval },
+    });
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json().error.hint).toBe('Re-run the preview and confirm again');
+    for (const confirmation_token of [undefined, 'invalid-token']) {
+      const replay = await f.app.inject({
+        method: 'POST',
+        url: op.url,
+        headers: keyHeaders,
+        payload: {
+          ...op.body,
+          ...(confirmation_token === undefined ? {} : { confirmation_token }),
+        },
+      });
+      expect(replay.statusCode, replay.body).toBe(200);
+      expect(replay.json()).toEqual(first.json());
+      expect(replay.headers['idempotency-replayed']).toBe('true');
+    }
+  });
+});
+it('rejects a token for another order and a token from the MCP channel', async () => {
+  const op = operation('cancel');
+  const approval = await token(op.url, op.body);
+  expect(
+    (
+      await f.app.inject({
+        method: 'POST',
+        url: '/api/orders/O-EDGE-UNASSIGNED/cancel',
+        headers: keyHeaders,
+        payload: { ...op.body, confirmation_token: approval },
+      })
+    ).statusCode,
+  ).toBe(428);
+  const signer = createConfirmationSigner({ secret: 'same-channel-test-secret-32-characters' });
+  await f.close();
+  f = fixture({ API_CONFIRM_SECRET: 'same-channel-test-secret-32-characters' });
+  const other = operation('cancel');
+  const input = {
+    orderId: other.url.split('/')[3]!,
+    actor: 'ops' as const,
+    reason: other.body.reason,
+  };
+  const cross = signer.sign({
+    channel: 'mcp',
+    operation: 'cancel',
+    args: input,
+    preview: f.runtime.services.order.previewCancel(input),
+  });
+  expect(
+    (
+      await f.app.inject({
+        method: 'POST',
+        url: other.url,
+        headers: keyHeaders,
+        payload: { ...other.body, confirmation_token: cross.confirmation_token },
+      })
+    ).statusCode,
+  ).toBe(428);
 });
 describe('write effects and failure contracts', () => {
   it('maps missing write targets, invalid advancement, refund inputs and unavailable partners', async () => {
@@ -461,7 +595,7 @@ describe('write effects and failure contracts', () => {
     ] as const;
     const before = hash();
     for (const [url, body, status, code] of cases) {
-      for (const suffix of ['', '/preview']) {
+      for (const suffix of ['/preview']) {
         const response = await f.app.inject({
           method: 'POST',
           url: url + suffix,
@@ -476,7 +610,7 @@ describe('write effects and failure contracts', () => {
       .items[0];
     if (!busy) throw new Error('Missing busy partner');
     const op = operation('reassign');
-    for (const suffix of ['', '/preview']) {
+    for (const suffix of ['/preview']) {
       const response = await f.app.inject({
         method: 'POST',
         url: op.url + suffix,
@@ -505,7 +639,10 @@ describe('write effects and failure contracts', () => {
       method: 'POST',
       url: op.url,
       headers: keyHeaders,
-      payload: { reason: 'Operator cancelled', confirm: true },
+      payload: {
+        reason: 'Operator cancelled',
+        confirmation_token: await token(op.url, { reason: 'Operator cancelled' }),
+      },
     });
     expect(response.statusCode, response.body).toBe(200);
     const result = OrderMutationSchema.parse(response.json());
@@ -525,7 +662,7 @@ describe('write effects and failure contracts', () => {
       .items[0];
     if (!delivered) throw new Error('No delivered order');
     const before = hash();
-    for (const suffix of ['', '/preview']) {
+    for (const suffix of ['/preview']) {
       const cancel = await f.app.inject({
         method: 'POST',
         url: `/api/orders/${delivered.id}/cancel${suffix}`,
@@ -555,7 +692,7 @@ describe('write effects and failure contracts', () => {
           method: 'POST',
           url: op.url,
           headers: keyHeaders,
-          payload: { ...op.body, confirm: true },
+          payload: { ...op.body, confirmation_token: await token(op.url, op.body) },
         })
       ).statusCode,
     ).toBe(200);
@@ -563,7 +700,7 @@ describe('write effects and failure contracts', () => {
       method: 'POST',
       url: op.url.replace('/advance', '/cancel'),
       headers: keyHeaders,
-      payload: { reason: op.body.reason, confirm: true },
+      payload: { reason: op.body.reason },
     });
     expect(conflict.statusCode).toBe(409);
     expect(conflict.json().error.code).toBe('CONFLICT');
@@ -585,7 +722,7 @@ describe('write effects and failure contracts', () => {
       method: 'POST',
       url: op.url,
       headers: { ...keyHeaders, origin: 'http://localhost:5173' },
-      payload: { ...op.body, confirm: true },
+      payload: { ...op.body, confirmation_token: await token(op.url, op.body) },
     });
     expect(execute.headers['access-control-expose-headers']).toContain('Idempotency-Replayed');
     await f.close();

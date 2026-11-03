@@ -7,7 +7,9 @@ export const CancelBodySchema = z.strictObject({ reason: TextSchema });
 export const AdvanceBodySchema = CancelBodySchema.extend({ to_status: OrderStatusSchema });
 export const RefundBodySchema = CancelBodySchema.extend({ amount_paise: PaiseSchema.positive() });
 export const ReassignBodySchema = CancelBodySchema.extend({ partner_id: IdSchema });
-const confirmation = { confirm: z.boolean().optional() };
+const confirmation = { confirmation_token: z.string().max(2048).optional() };
+export const confirmedPreview = <S extends z.ZodObject>(schema: S) =>
+  schema.extend({ confirmation_token: z.string(), expires_at: z.string().datetime() });
 export const CancelExecuteSchema = CancelBodySchema.extend(confirmation);
 export const AdvanceExecuteSchema = AdvanceBodySchema.extend(confirmation);
 export const RefundExecuteSchema = RefundBodySchema.extend(confirmation);

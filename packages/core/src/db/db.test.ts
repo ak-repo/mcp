@@ -1,7 +1,7 @@
 import { createSeedData } from '../seed/factories.js';
 import { insertSeedData } from '../seed/storage.js';
 import { checkSeedInvariants } from '../seed/invariants.js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -175,6 +175,7 @@ beforeEach(() => {
   db = openWritable(databasePath);
 });
 afterEach(() => {
+  vi.useRealTimers();
   for (const connection of extraConnections.splice(0)) if (connection.open) connection.close();
   if (db.open) db.close();
   rmSync(directory, { recursive: true, force: true });
@@ -496,6 +497,8 @@ describe('change-log upgrade', () => {
 });
 
 it('preserves operational invariants after placing and cancelling a live order on a seed', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-02T12:00:00.000Z'));
   const { seedDatabase } = await import('../seed/seed.js');
   const { createServices } = await import('../services/index.js');
   seedDatabase(db);

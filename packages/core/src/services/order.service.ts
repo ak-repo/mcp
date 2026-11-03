@@ -359,14 +359,21 @@ export function createOrderService(context: ServiceContext) {
     },
     executeCancel(
       input: OrderWriteInput,
-      options?: { expectedPreview?: Presented<ReturnType<typeof cancellationPreview>> },
+      options?: {
+        expectedPreview?: Presented<ReturnType<typeof cancellationPreview>>;
+        expectedPreviewHash?: string;
+      },
     ) {
       validateCancel(input);
       return context.mutate(
         'order.executeCancel',
         input,
         (repos) => {
-          assertExpectedPreview(options?.expectedPreview, () => cancellationPreview(repos, input));
+          assertExpectedPreview(
+            options?.expectedPreview,
+            () => cancellationPreview(repos, input),
+            options?.expectedPreviewHash,
+          );
           return cancel(repos, input);
         },
         decodeOrderMutation,
@@ -374,14 +381,21 @@ export function createOrderService(context: ServiceContext) {
     },
     advanceStatus(
       input: AdvanceInput,
-      options?: { expectedPreview?: Presented<ReturnType<typeof advancePreview>> },
+      options?: {
+        expectedPreview?: Presented<ReturnType<typeof advancePreview>>;
+        expectedPreviewHash?: string;
+      },
     ) {
       validateAdvance(input);
       return context.mutate(
         'order.advanceStatus',
         input,
         (repos): OrderMutationResult => {
-          assertExpectedPreview(options?.expectedPreview, () => advancePreview(repos, input));
+          assertExpectedPreview(
+            options?.expectedPreview,
+            () => advancePreview(repos, input),
+            options?.expectedPreviewHash,
+          );
           const order = required(repos.order.get(input.orderId), 'Order');
           assertTransition(order.status, input.toStatus);
           if (input.toStatus === 'cancelled') return cancel(repos, input);

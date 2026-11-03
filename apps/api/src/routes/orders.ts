@@ -19,6 +19,7 @@ import {
   IdParamsSchema,
   EmptyQuerySchema,
   responseSchema,
+  confirmedPreview,
   AdvanceBodySchema,
   CancelBodySchema,
   RefundBodySchema,
@@ -26,7 +27,10 @@ import {
   CancelExecuteSchema,
   RefundExecuteSchema,
 } from './schemas.js';
-const orders: FastifyPluginAsync<{ runtime: Runtime }> = async (app, { runtime: { services } }) => {
+const orders: FastifyPluginAsync<{ runtime: Runtime }> = async (
+  app,
+  { runtime: { services, confirmation } },
+) => {
   app.get<{ Reply: z.output<typeof OrderPageSchema> }>(
     '/orders',
     { schema: responseSchema(OrderPageSchema) },
@@ -66,44 +70,68 @@ const orders: FastifyPluginAsync<{ runtime: Runtime }> = async (app, { runtime: 
       return services.invoice.getInvoice(id);
     },
   );
-  app.post<{ Reply: z.output<typeof AdvancePreviewSchema> }>(
+  app.post<{ Reply: z.output<ReturnType<typeof confirmedPreview<typeof AdvancePreviewSchema>>> }>(
     '/orders/:id/advance/preview',
-    { preHandler: app.writeRateLimit, schema: responseSchema(AdvancePreviewSchema) },
+    {
+      preHandler: app.writeRateLimit,
+      schema: responseSchema(confirmedPreview(AdvancePreviewSchema)),
+    },
     async (request) => {
       const { id } = validate(IdParamsSchema, request.params);
       validate(EmptyQuerySchema, request.query);
       const body = validate(AdvanceBodySchema, request.body);
-      return services.order.previewAdvanceStatus({
+      const input = {
         orderId: id,
-        actor: 'ops',
+        actor: 'ops' as const,
         reason: body.reason,
         toStatus: body.to_status,
-      });
+      };
+      const preview = services.order.previewAdvanceStatus(input);
+      return {
+        ...preview,
+        ...confirmation.sign({ channel: 'rest', operation: 'advance', args: input, preview }),
+      };
     },
   );
-  app.post<{ Reply: z.output<typeof CancelPreviewSchema> }>(
+  app.post<{ Reply: z.output<ReturnType<typeof confirmedPreview<typeof CancelPreviewSchema>>> }>(
     '/orders/:id/cancel/preview',
-    { preHandler: app.writeRateLimit, schema: responseSchema(CancelPreviewSchema) },
+    {
+      preHandler: app.writeRateLimit,
+      schema: responseSchema(confirmedPreview(CancelPreviewSchema)),
+    },
     async (request) => {
       const { id } = validate(IdParamsSchema, request.params);
       validate(EmptyQuerySchema, request.query);
       const body = validate(CancelBodySchema, request.body);
-      return services.order.previewCancel({ orderId: id, actor: 'ops', reason: body.reason });
+      const input = { orderId: id, actor: 'ops' as const, reason: body.reason };
+      const preview = services.order.previewCancel(input);
+      return {
+        ...preview,
+        ...confirmation.sign({ channel: 'rest', operation: 'cancel', args: input, preview }),
+      };
     },
   );
-  app.post<{ Reply: z.output<typeof RefundPreviewSchema> }>(
+  app.post<{ Reply: z.output<ReturnType<typeof confirmedPreview<typeof RefundPreviewSchema>>> }>(
     '/orders/:id/refund/preview',
-    { preHandler: app.writeRateLimit, schema: responseSchema(RefundPreviewSchema) },
+    {
+      preHandler: app.writeRateLimit,
+      schema: responseSchema(confirmedPreview(RefundPreviewSchema)),
+    },
     async (request) => {
       const { id } = validate(IdParamsSchema, request.params);
       validate(EmptyQuerySchema, request.query);
       const body = validate(RefundBodySchema, request.body);
-      return services.refund.previewRefund({
+      const input = {
         orderId: id,
-        actor: 'ops',
+        actor: 'ops' as const,
         reason: body.reason,
         amountPaise: body.amount_paise,
-      });
+      };
+      const preview = services.refund.previewRefund(input);
+      return {
+        ...preview,
+        ...confirmation.sign({ channel: 'rest', operation: 'refund', args: input, preview }),
+      };
     },
   );
   app.post<{ Reply: z.output<typeof OrderMutationSchema> }>(
@@ -124,6 +152,8 @@ const orders: FastifyPluginAsync<{ runtime: Runtime }> = async (app, { runtime: 
         }),
         services.order.replayAdvanceStatus,
         services.order.advanceStatus,
+        confirmation,
+        'advance',
       );
     },
   );
@@ -144,6 +174,8 @@ const orders: FastifyPluginAsync<{ runtime: Runtime }> = async (app, { runtime: 
         }),
         services.order.replayCancel,
         services.order.executeCancel,
+        confirmation,
+        'cancel',
       );
     },
   );
@@ -165,6 +197,8 @@ const orders: FastifyPluginAsync<{ runtime: Runtime }> = async (app, { runtime: 
         }),
         services.refund.replayRefund,
         services.refund.executeRefund,
+        confirmation,
+        'refund',
       );
     },
   );

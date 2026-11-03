@@ -144,7 +144,7 @@ try {
   const result = await api(`/api/orders/${order.id}/cancel`, {
     method: 'POST',
     headers: { 'Idempotency-Key': 'smoke-api-cancel' },
-    body: JSON.stringify({ reason, confirm: true }),
+    body: JSON.stringify({ reason, confirmation_token: preview.confirmation_token }),
   });
   assert.equal(result.order.status, 'cancelled');
   assert.equal(result.partner.status, 'available');

@@ -1,3 +1,4 @@
+import { confirmationDigest } from '../confirmation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import {
@@ -84,17 +85,27 @@ export function canonical(value: unknown): string {
     );
   return json;
 }
-export function assertExpectedPreview(expected: unknown, preview: () => unknown): void {
-  if (expected === undefined) return;
+export function assertExpectedPreview(
+  expected: unknown,
+  preview: () => unknown,
+  expectedHash?: string,
+): void {
+  if (expected === undefined && expectedHash === undefined) return;
   try {
-    if (canonical(expected) === canonical(present(preview()))) return;
+    const current = present(preview());
+    if (
+      expectedHash !== undefined
+        ? expectedHash === confirmationDigest(current)
+        : canonical(expected) === canonical(current)
+    )
+      return;
   } catch (error) {
     if (!(error instanceof AppError) || error.code === ErrorCode.INTERNAL) throw error;
   }
   throw new AppError(
     ErrorCode.CONFLICT,
     'Operation preview changed',
-    'Refresh the preview before retrying',
+    'Re-run the preview and confirm again',
     { precondition: 'preview_changed' },
   );
 }
