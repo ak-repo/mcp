@@ -15,3 +15,4 @@ export * from './schemas/refund.js';
 export * from './schemas/restaurant.js';
 export * from './schemas/responses.js';
 export * from './schemas/agent.js';
+export * from './schemas/chat.js';
