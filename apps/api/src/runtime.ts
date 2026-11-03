@@ -87,6 +87,7 @@ export function openRuntime(config: Config): Runtime {
       logger,
       { enabled: config.SIMULATOR === 'on', interval_ms: config.SIMULATOR_INTERVAL_MS },
       config.SIMULATOR_SEED,
+      { maxActive: config.SIMULATOR_MAX_ACTIVE },
     );
     let closed = false;
     return {

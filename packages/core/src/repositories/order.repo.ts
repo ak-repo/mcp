@@ -38,6 +38,25 @@ export function createOrderRepository(db: DatabaseConnection) {
         [id],
         OrderEventSchema,
       ),
+    countActive() {
+      return db
+        .prepare<[], { n: number }>(
+          "SELECT count(*) AS n FROM orders WHERE status NOT IN ('delivered', 'cancelled')",
+        )
+        .get()!.n;
+    },
+    progressable(statuses: readonly string[], limit: number) {
+      return many(
+        db,
+        `WITH candidates AS (
+        SELECT ${ORDER_COLUMNS}, row_number() OVER (PARTITION BY status ORDER BY updated_at ASC, id ASC) AS rank
+        FROM orders WHERE status IN (${statuses.map(() => '?').join(',')})
+        AND NOT EXISTS (SELECT 1 FROM payments WHERE payments.order_id = orders.id AND payments.status = 'failed')
+      ) SELECT ${ORDER_COLUMNS} FROM candidates WHERE rank <= ? ORDER BY updated_at ASC, id ASC`,
+        [...statuses, limit],
+        OrderSchema,
+      );
+    },
     list(filters: OrderSearchFilters) {
       const cursor = filters.cursor ? decodeCursor(filters.cursor) : null;
       const bounds = dateBounds(filters.from, filters.to);

@@ -1,3 +1,4 @@
+import { openWritable } from '@foodops/core/db/connection';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ORDER_TRANSITIONS } from '@foodops/core';
 import { createSimulator, type Simulator } from './simulator.js';
@@ -97,9 +98,9 @@ it('does not overlap ticks, isolates action errors, and disabling stops scheduli
   vi.useFakeTimers();
   f = fixture();
   const services = f.runtime.services;
-  const list = services.order.listOrders;
+  const list = services.order.listProgressable;
   let injected = false;
-  vi.spyOn(services.order, 'listOrders').mockImplementation((input) => {
+  vi.spyOn(services.order, 'listProgressable').mockImplementation((input) => {
     if (!injected) {
       injected = true;
       vi.advanceTimersByTime(10000);
@@ -184,4 +185,84 @@ it('exposes authenticated strict runtime controls and resets on reopen', async (
   } finally {
     reopened.close();
   }
+});
+it('does not place orders once the active backlog reaches its cap', async () => {
+  vi.useFakeTimers();
+  f = fixture();
+  simulator = createSimulator(
+    f.runtime.services,
+    f.runtime.logger,
+    { enabled: true, interval_ms: 1000 },
+    42,
+    { maxActive: 1 },
+  );
+  const place = vi.spyOn(f.runtime.services.order, 'placeOrder');
+  simulator.start();
+  await vi.advanceTimersByTimeAsync(10000);
+  await simulator.stop();
+  expect(place).not.toHaveBeenCalled();
+  expect(simulator.status().orders_placed).toBe(0);
+});
+it('progresses an old untouched order', async () => {
+  vi.useFakeTimers();
+  f = fixture();
+  const services = f.runtime.services;
+  const oldest = services.order.listProgressable({ statuses: ['placed'], limitPerStatus: 1 })[0]!;
+  simulator = createSimulator(
+    services,
+    f.runtime.logger,
+    { enabled: true, interval_ms: 1000 },
+    42,
+    { maxActive: 1 },
+  );
+  simulator.start();
+  await vi.advanceTimersByTimeAsync(60000);
+  await simulator.stop();
+  expect(services.order.getOrder(oldest.id).order.status).not.toBe('placed');
+});
+it('waits when every partner is busy, then uses a partner released by a delivery', async () => {
+  vi.useFakeTimers();
+  f = fixture();
+  const services = f.runtime.services;
+  const orderId = 'O-EDGE-UNASSIGNED';
+  for (const toStatus of ['preparing', 'ready'] as const)
+    services.order.advanceStatus({
+      orderId,
+      toStatus,
+      actor: 'system',
+      reason: 'Prepare waiting test',
+    });
+  const db = openWritable(f.dbPath);
+  try {
+    db.prepare("UPDATE delivery_partners SET status='busy'").run();
+  } finally {
+    db.close();
+  }
+  const list = services.order.listProgressable;
+  vi.spyOn(services.order, 'listProgressable').mockImplementation((input) =>
+    list(input).filter((order) => order.id === orderId),
+  );
+  simulator = createSimulator(
+    services,
+    f.runtime.logger,
+    { enabled: true, interval_ms: 1000 },
+    42,
+    { maxActive: 1 },
+  );
+  simulator.start();
+  await vi.advanceTimersByTimeAsync(1100);
+  expect(simulator.status().ticks_waiting_for_partner).toBe(1);
+  expect(services.order.getOrder(orderId).delivery?.partner_id).toBeNull();
+  const finished = services.order.advanceStatus({
+    orderId: 'O-EDGE-LATE',
+    toStatus: 'delivered',
+    actor: 'system',
+    reason: 'Free a partner',
+  });
+  expect(finished.partner?.status).toBe('available');
+  await vi.advanceTimersByTimeAsync(1100);
+  await simulator.stop();
+  expect(services.order.getOrder(orderId).delivery?.partner_id).toBe(finished.partner?.id);
+  expect(services.order.getOrder(orderId).order.status).toBe('picked_up');
+  expect(simulator.status().errors).toBe(0);
 });

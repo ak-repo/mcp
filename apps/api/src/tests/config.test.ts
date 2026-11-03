@@ -33,6 +33,7 @@ describe('API configuration', () => {
       SSE_REPLAY_LIMIT: 1000,
       SIMULATOR_INTERVAL_MS: 5000,
       SIMULATOR_SEED: 42,
+      SIMULATOR_MAX_ACTIVE: 60,
     });
   });
   it('process values override .env without mutating process environment', () => {
@@ -70,6 +71,7 @@ describe('API configuration', () => {
     ['WEB_ORIGIN', ''],
     ['LOG_LEVEL', 'verbose'],
     ['SIMULATOR', 'true'],
+    ['SIMULATOR_MAX_ACTIVE', '0'],
     ['CHANGE_FEED_POLL_MS', '99'],
     ['CHANGE_FEED_POLL_MS', '60001'],
     ['SSE_MAX_STREAMS', '0'],

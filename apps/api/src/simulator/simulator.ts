@@ -12,9 +12,17 @@ export function createSimulator(
   logger: Logger,
   settings: SimulatorSettings,
   seed: number,
+  options: { maxActive?: number } = {},
 ) {
   const random = createRng(seed);
-  const stats = { ticks: 0, orders_placed: 0, advanced: 0, cancelled: 0, errors: 0 };
+  const stats = {
+    ticks: 0,
+    orders_placed: 0,
+    advanced: 0,
+    cancelled: 0,
+    errors: 0,
+    ticks_waiting_for_partner: 0,
+  };
   let config = { ...settings };
   let active = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -29,8 +37,9 @@ export function createSimulator(
     await Promise.resolve();
     if (!active || !config.enabled) return;
     stats.ticks++;
+    let waitingForPartner = false;
     try {
-      if (random() < 0.3) {
+      if (random() < 0.3 && services.order.countActive() < (options.maxActive ?? 60)) {
         try {
           const restaurant = choose(
             services.catalog.searchRestaurants({ openNow: true, limit: 50 }).items,
@@ -62,16 +71,17 @@ export function createSimulator(
           failed(error);
         }
       }
-      const eligible: ReturnType<Services['order']['listOrders']>['items'] = [];
-      for (const status of [
-        'placed',
-        'accepted',
-        'preparing',
-        'ready',
-        'picked_up',
-        'out_for_delivery',
-      ] as const)
-        eligible.push(...services.order.listOrders({ status, limit: 50 }).items);
+      const eligible = services.order.listProgressable({
+        statuses: ['placed', 'accepted', 'preparing', 'ready', 'picked_up', 'out_for_delivery'],
+        limitPerStatus: 50,
+      });
+      // Placement time gives simulator-created orders a stable sampling order when a tick updates several at once.
+      eligible.sort(
+        (a, b) =>
+          a.updated_at.localeCompare(b.updated_at) ||
+          a.placed_at.localeCompare(b.placed_at) ||
+          a.id.localeCompare(b.id),
+      );
       for (let n = 0; n < 3 && eligible.length; n++) {
         const index = Math.floor(random() * eligible.length);
         const order = eligible.splice(index, 1)[0];
@@ -100,7 +110,10 @@ export function createSimulator(
             const partner = choose(
               services.delivery.listDeliveryPartners({ status: 'available', limit: 50 }).items,
             );
-            if (!partner) continue;
+            if (!partner) {
+              waitingForPartner = true;
+              continue;
+            }
             services.delivery.executeReassign({
               ...meta,
               idempotencyKey: randomUUID(),
@@ -116,6 +129,8 @@ export function createSimulator(
       }
     } catch (error) {
       failed(error);
+    } finally {
+      if (waitingForPartner) stats.ticks_waiting_for_partner++;
     }
   }
   function schedule() {

@@ -314,6 +314,33 @@ export function createOrderService(context: ServiceContext) {
         };
       });
     },
+    countActive() {
+      return context.read((repos) => repos.order.countActive());
+    },
+    listProgressable(input: {
+      statuses: readonly import('@foodops/shared').OrderStatus[];
+      limitPerStatus?: number;
+    }) {
+      keys(input, ['statuses', 'limitPerStatus']);
+      const statuses = parse(
+        OrderSchema.shape.status.array().min(1).max(6),
+        input.statuses,
+        'progressable statuses',
+      );
+      const limit = input.limitPerStatus ?? 50;
+      if (
+        statuses.some((status) => ['delivered', 'cancelled'].includes(status)) ||
+        !Number.isSafeInteger(limit) ||
+        limit < 1 ||
+        limit > 50
+      )
+        throw new AppError(
+          ErrorCode.VALIDATION,
+          'Invalid progressable order filters',
+          'Use active statuses and a per-status limit from 1 to 50',
+        );
+      return context.read((repos) => repos.order.progressable([...new Set(statuses)], limit));
+    },
     listOrders(input: OrderListInput = {}) {
       keys(input, [
         'status',
