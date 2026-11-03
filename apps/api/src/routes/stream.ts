@@ -20,7 +20,7 @@ const stream: FastifyPluginAsync<{ runtime: Runtime; replayLimit: number }> = as
   app,
   { runtime, replayLimit },
 ) => {
-  app.post('/stream/ticket', { preHandler: app.writeRateLimit }, async (request) => {
+  app.post('/stream/ticket', { preHandler: app.ticketRateLimit }, async (request) => {
     validate(z.strictObject({}), request.query);
     validate(z.strictObject({}).optional(), request.body);
     return runtime.tickets.issue();

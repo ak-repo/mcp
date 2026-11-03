@@ -726,7 +726,7 @@ describe('write effects and failure contracts', () => {
     });
     expect(execute.headers['access-control-expose-headers']).toContain('Idempotency-Replayed');
     await f.close();
-    f = fixture({ RATE_LIMIT_PER_MIN: 4 });
+    f = fixture({ RATE_LIMIT_PER_MIN: 4, RATE_LIMIT_WRITE_PER_MIN: 1 });
     const next = operation('cancel');
     const before = hash();
     expect(

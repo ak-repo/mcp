@@ -48,8 +48,12 @@ export function buildApp(deps: { config: Config; runtime: Runtime }): FastifyIns
   app.register(requestContext);
   app.register(errorHandler);
   app.register(securityHeaders);
-  app.register(rateLimit, { max: config.RATE_LIMIT_PER_MIN });
   app.register(cors, { origins: config.WEB_ORIGIN });
+  app.register(rateLimit, {
+    max: config.RATE_LIMIT_PER_MIN,
+    writeMax: config.RATE_LIMIT_WRITE_PER_MIN,
+    ticketMax: config.RATE_LIMIT_TICKET_PER_MIN,
+  });
   app.register(auth, { token: config.ADMIN_TOKEN });
   app.addHook('onReady', async () => {
     runtime.start();

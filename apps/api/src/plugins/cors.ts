@@ -70,7 +70,14 @@ export default fp<{ origins: readonly string[] }>(
         'Idempotency-Key',
         'Last-Event-ID',
       ],
-      exposedHeaders: ['X-Request-Id', 'Idempotency-Replayed'],
+      exposedHeaders: [
+        'Retry-After',
+        'X-RateLimit-Limit',
+        'X-RateLimit-Remaining',
+        'X-RateLimit-Reset',
+        'Idempotency-Replayed',
+        'X-Request-Id',
+      ],
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       strictPreflight: true,
     });

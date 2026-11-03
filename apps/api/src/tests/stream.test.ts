@@ -137,3 +137,26 @@ it('sends a heartbeat comment after 15 seconds', async () => {
     ': heartbeat\n\n',
   );
 });
+
+it('preserves CORS and exposed headers after SSE hijack', async () => {
+  const address = await f.app.listen({ host: '127.0.0.1', port: 0 });
+  const key = await ticket();
+  const controller = new AbortController();
+  controllers.push(controller);
+  const response = await fetch(`${address}/api/stream?ticket=${key}`, {
+    signal: controller.signal,
+    headers: { Origin: 'http://localhost:5173' },
+  });
+  expect(response.status).toBe(200);
+  expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
+  for (const header of [
+    'Retry-After',
+    'X-RateLimit-Limit',
+    'X-RateLimit-Remaining',
+    'X-RateLimit-Reset',
+    'Idempotency-Replayed',
+    'X-Request-Id',
+  ])
+    expect(response.headers.get('access-control-expose-headers')).toContain(header);
+  controller.abort();
+});

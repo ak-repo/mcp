@@ -86,7 +86,9 @@ export const ConfigSchema = z.object({
   CHANGE_FEED_POLL_MS: positiveInteger.pipe(z.number().min(100).max(60000)).default(500),
   SSE_MAX_STREAMS: positiveInteger.pipe(z.number().max(1000)).default(50),
   SSE_REPLAY_LIMIT: positiveInteger.pipe(z.number().max(10000)).default(1000),
-  RATE_LIMIT_PER_MIN: positiveInteger.default(120),
+  RATE_LIMIT_PER_MIN: positiveInteger.default(1200),
+  RATE_LIMIT_WRITE_PER_MIN: positiveInteger.default(60),
+  RATE_LIMIT_TICKET_PER_MIN: positiveInteger.default(60),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 export function loadConfig(options: { root?: string; env?: NodeJS.ProcessEnv } = {}): Config {

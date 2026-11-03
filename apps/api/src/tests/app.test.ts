@@ -290,7 +290,7 @@ describe('rate limits', () => {
   });
   it('enforces a separate stricter write bucket alongside the global one', async () => {
     await f.close();
-    f = fixture({ RATE_LIMIT_PER_MIN: 8 });
+    f = fixture({ RATE_LIMIT_PER_MIN: 8, RATE_LIMIT_WRITE_PER_MIN: 2 });
     f.app.register(async (app) => {
       app.post('/write', { preHandler: app.writeRateLimit }, async () => ({ ok: true }));
     });
@@ -307,4 +307,41 @@ describe('rate limits', () => {
     );
     expect((await f.app.inject('/api/health')).statusCode).toBe(200);
   });
+});
+
+it('allows 200 dashboard reads and keeps write/ticket buckets independent', async () => {
+  await f.close();
+  f = fixture({ RATE_LIMIT_WRITE_PER_MIN: 1, RATE_LIMIT_TICKET_PER_MIN: 1 });
+  for (let n = 0; n < 200; n++)
+    expect((await f.app.inject({ url: '/api/orders?limit=1', headers: AUTH })).statusCode).toBe(
+      200,
+    );
+  const headers = { ...AUTH, origin: 'http://localhost:5173' };
+  const preview = () =>
+    f.app.inject({
+      method: 'POST',
+      url: '/api/orders/O-EDGE-UNASSIGNED/cancel/preview',
+      headers,
+      payload: { reason: 'test' },
+    });
+  const ticket = () => f.app.inject({ method: 'POST', url: '/api/stream/ticket', headers });
+  expect((await preview()).statusCode).toBe(200);
+  expect((await ticket()).statusCode).toBe(200);
+  for (const response of [await preview(), await ticket()]) {
+    expectError(response, 429, 'LIMIT_EXCEEDED');
+    expect(Number(response.headers['retry-after'])).toBeGreaterThan(0);
+    expect(response.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+    expect(response.headers['access-control-expose-headers']).toContain('Retry-After');
+    expect(response.headers['access-control-expose-headers']).toContain('X-RateLimit-Remaining');
+  }
+  expect((await f.app.inject({ url: '/api/health', headers })).statusCode).toBe(200);
+});
+it('keeps CORS headers on an overall rate-limit response', async () => {
+  await f.close();
+  f = fixture({ RATE_LIMIT_PER_MIN: 1 });
+  const headers = { origin: 'http://localhost:5173' };
+  await f.app.inject({ url: '/api/health', headers });
+  const response = await f.app.inject({ url: '/api/health', headers });
+  expectError(response, 429, 'LIMIT_EXCEEDED');
+  expect(response.headers['access-control-expose-headers']).toContain('Retry-After');
 });
