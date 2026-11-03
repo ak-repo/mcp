@@ -759,7 +759,7 @@ describe('write effects and failure contracts', () => {
     });
     await f.app.ready();
     const doc = readFileSync(new URL('../../../../docs/api.md', import.meta.url), 'utf8');
-    expect(routes.length).toBe(24);
+    expect(routes.length).toBe(25);
     const documented = doc
       .split('\n')
       .filter((line) => line.startsWith('|'))
@@ -769,4 +769,19 @@ describe('write effects and failure contracts', () => {
         documented.some((cells) => cells[1] === route.method && cells[2] === `\`${route.path}\``),
       ).toBe(true);
   });
+});
+
+it('authenticates the operator identity route', async () => {
+  const response = await f.app.inject({ url: '/api/me', headers: AUTH });
+  expect(response.statusCode).toBe(200);
+  expect(response.json()).toEqual({ actor: 'ops', auth: 'bearer' });
+  for (const headers of [
+    {},
+    { authorization: 'Bearer wrong' },
+    { authorization: [AUTH.authorization, AUTH.authorization] },
+  ]) {
+    const rejected = await f.app.inject({ url: '/api/me', headers: headers as Record<string, string | string[]> });
+    expect(rejected.statusCode).toBe(401);
+    expect(rejected.json().error.code).toBe('UNAUTHORIZED');
+  }
 });

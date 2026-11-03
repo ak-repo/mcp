@@ -36,6 +36,7 @@ All domain successes, including writes and replays, use HTTP 200. Paths are case
 | POST    | `/api/orders/:id/cancel`                    | `{ reason, confirmation_token }`                                                           | `OrderMutationResult`     | `order.executeCancel`           | 200     |
 | POST    | `/api/orders/:id/refund`                    | `{ reason, amount_paise, confirmation_token }`                                             | `RefundResult`            | `refund.executeRefund`          | 200     |
 | POST    | `/api/deliveries/:orderId/reassign`         | `{ reason, partner_id, confirmation_token }`                                               | `ReassignResult`          | `delivery.executeReassign`      | 200     |
+| GET | `/api/me` | Empty query; bearer auth | `{ actor: "ops", auth: "bearer" }` | Authentication plugin | 200 |
 | OPTIONS | `*`                                         | Valid Origin + Access-Control-Request-Method; optional Access-Control-Request-Headers | Empty preflight response  | CORS plugin                     | 204     |
 
 `GET /api/ready` returns 503 when its core read fails. MCP connectivity checks, the MCP tool catalog, chat and providers remain deferred. SSE and simulator endpoints are documented below.
@@ -189,3 +190,5 @@ Simulator activity is explicitly enabled autonomous synthetic traffic, with acto
 REST confirmation config: `API_CONFIRM_SECRET` defaults to unset (random per-process), or must have at least 32 characters without whitespace. The signature domain changes on this deployment; previously issued MCP preview tokens must be refreshed.
 
 Rate limits are independent per IP: overall `RATE_LIMIT_PER_MIN=1200` (including auth failures and unknown routes), write/preview/simulator `RATE_LIMIT_WRITE_PER_MIN=60`, and ticket issuance `RATE_LIMIT_TICKET_PER_MIN=60`. All must be positive integers. Tickets consume overall + ticket, not write quota. CORS exposes Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Idempotency-Replayed and X-Request-Id on ordinary, 429 and SSE responses. Allowed request headers include Authorization, Content-Type, Idempotency-Key, Last-Event-ID, X-Request-Id, and existing X-Run-Id.
+
+`GET /api/me` validates the UI bearer token. Missing, wrong or duplicate Authorization returns the standard 401 UNAUTHORIZED error; it is not a public health endpoint.
