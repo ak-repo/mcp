@@ -18,6 +18,8 @@ export interface ToolDefinition {
   parameters: JsonSchemaObject;
 }
 export interface ChatOptions {
+  /** Lower the configured retry budget; probes use zero. */
+  maxRetries?: number;
   temperature?: number;
   maxTokens?: number;
   numCtx?: number;

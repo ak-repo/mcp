@@ -4,6 +4,7 @@ import type { Config } from '../../config.js';
 import { httpError, LLMError, protocolError } from '../errors.js';
 import { openHttp, readNdjson, withRetry } from '../http.js';
 import { ConcurrencyLimiter } from '../limiter.js';
+import type { ProviderDependencies } from './common.js';
 import { sanitizeToolSchema } from '../schema-sanitizer.js';
 import type {
   ChatOptions,
@@ -83,9 +84,9 @@ interface BufferedCall {
 }
 export function createOllamaProvider(
   config: Config,
-  dependencies: { fetch?: typeof fetch } = {},
+  dependencies: ProviderDependencies = {},
 ): LLMProvider {
-  const limiter = new ConcurrencyLimiter(config.LLM_MAX_CONCURRENCY);
+  const limiter = dependencies.limiter ?? new ConcurrencyLimiter(config.LLM_MAX_CONCURRENCY);
   const fetcher = dependencies.fetch ?? fetch;
   const base = config.LLM_BASE_URL.replace(/\/+$/, '');
   const headers = {
@@ -255,7 +256,7 @@ export function createOllamaProvider(
       }
       try {
         yield* withRetry(attempt, {
-          maxRetries: config.LLM_MAX_RETRIES,
+          maxRetries: options.maxRetries ?? config.LLM_MAX_RETRIES,
           ...(options.signal ? { signal: options.signal } : {}),
         });
       } finally {

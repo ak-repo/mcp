@@ -1093,7 +1093,7 @@ Git evidence below is inspected at baseline `3247bcf`; the initial repository co
 Copy this structure, replace the example values with facts, and allocate the next unused H-number. Keep full relevant prompts in a text fence or details block; redact credentials and mark redactions.
 
 ```markdown
-## H019: Descriptive task title
+## H020: Descriptive task title
 
 - Date: YYYY-MM-DD; agent/tool: actual name, or unknown.
 - Branch and base commit: actual branch/hash.
@@ -1104,3 +1104,20 @@ Copy this structure, replace the example values with facts, and allocate the nex
 - Commit evidence: actual hash(es), or uncommitted; never invent a hash or commit merely to fill this field.
 - Limits/deviations: unfinished work, changed scope, branch-only work and explicit approvals.
 ```
+
+## H019: Complete provider layer
+
+- Date: 2026-11-03; agent/tool: Codex.
+- Branch/base: feat/phase-3, e2419a8; status: in progress; commits: uncommitted.
+- User implementation approval (exact): `Implement the plan.`
+- Material planning decisions: user selected “Hard two-call cap (Recommended)” for probes and “Disable outbound thinking (Recommended)” for Anthropic.
+- Approved scope: OpenAI-compatible/Anthropic streaming adapters, prompted JSON tools with strict Ajv validation and one repair, explicit bounded provider probe/cache, in-memory atomic provider manager, documentation and tests. Three requested commits: `feat(api): openai-compatible and anthropic adapters`, `feat(api): prompted tools fallback`, `feat(api): provider probe and registry`.
+- Verification: pending. No live provider requests authorized or required; tests use local fake servers.
+- Compatibility: preserve Ollama factories, normalized events, and MCP behavior. Anthropic thinking rejected outbound because normalized history cannot retain signatures. Probe retries and repair disabled to enforce two billable requests.
+
+### H019 Part A — adapters
+
+- Implemented OpenAI-compatible and Anthropic factories, shared bounded SSE transport/model listing, per-call retry-budget lowering and shared limiter injection in Ollama. Added 20 local-server adapter tests.
+- Paths: apps/api/src/llm/{adapters,types.ts,index.ts}; no database or MCP changes.
+- Verification: API typecheck and focused ESLint passed; pnpm build passed. Initial focused invocation from repository root discovered zero tests (wrong working directory); corrected to apps/api. Sandbox loopback bind failed EPERM; reran with approved local-server permissions. Existing CLI test initially failed against stale dist; rebuilt before rerunning.
+- Commit: pending first requested commit. Later outcomes appended below.
