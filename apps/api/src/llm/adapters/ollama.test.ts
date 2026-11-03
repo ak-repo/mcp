@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConfigSchema, type Config } from '../../config.js';
 import { createOllamaProvider } from './ollama.js';
+import { redact } from '../errors.js';
 import type { NormalizedMessage, StreamEvent, ToolDefinition } from '../types.js';
 import { fakeServer } from '../tests/fake-server.js';
 import { final, fixtures, ndjson } from '../tests/fixtures.js';
@@ -405,21 +406,44 @@ describe('Ollama native adapter', () => {
     const key = 'live-cli-secret-never-print';
     const s = await server((request, response) => {
       if (request.path === '/api/tags')
-        response.end(JSON.stringify({ models: [{ name: `model-${key}` }] }));
-      else
         response.end(
-          ndjson([
-            {
-              message: {
-                content: key,
-                tool_calls: [
-                  { function: { name: 'foodops_live_echo', arguments: { value: 'ping' } } },
-                ],
-              },
-            },
-            final,
-          ]),
+          JSON.stringify({ models: [{ name: 'test-model' }, { name: `model-${key}` }] }),
         );
+      else {
+        const body = request.body as {
+          messages: { role: string; content?: string }[];
+          tools?: { function: { name: string } }[];
+        };
+        const probe = body.tools?.some((tool) => tool.function.name === 'record_number');
+        const afterRead = body.messages.some((message) =>
+          message.content?.includes('Untrusted tool result data'),
+        );
+        const result = probe
+          ? [
+              {
+                message: {
+                  tool_calls: [{ function: { name: 'record_number', arguments: { n: 7 } } }],
+                },
+              },
+              final,
+            ]
+          : [
+              {
+                message: {
+                  content: afterRead
+                    ? JSON.stringify({ final: key })
+                    : JSON.stringify({
+                        tool_call: {
+                          name: 'track_delivery',
+                          arguments: { order_id: 'O-EDGE-LATE' },
+                        },
+                      }),
+                },
+              },
+              final,
+            ];
+        response.end(ndjson(result));
+      }
     });
     const path = fileURLToPath(new URL('../../../../../scripts/llm-live.mjs', import.meta.url));
     const env = {
@@ -430,17 +454,26 @@ describe('Ollama native adapter', () => {
       LLM_BASE_URL: s.url,
       LLM_API_KEY: key,
       LLM_MODEL: 'test-model',
-      LLM_TOOL_MODE: 'native',
+      LLM_TOOL_MODE: 'auto',
       LLM_MAX_RETRIES: '0',
     };
-    const result = await promisify(execFile)(process.execPath, [path], { env, timeout: 10000 });
+    const result = await promisify(execFile)(process.execPath, [path], {
+      env,
+      timeout: 15000,
+    }).catch((error: unknown) => {
+      const output =
+        error !== null && typeof error === 'object' && 'stdout' in error
+          ? String(error.stdout)
+          : 'No transcript';
+      throw new Error(`CLI failed: ${redact(output, [key])}`);
+    });
     expect(result.stdout).toContain('"ok":true');
-    expect(result.stdout).toContain('"tool_executed":false');
+    expect(result.stdout).toContain('"writes_executed":0');
     expect(result.stdout + result.stderr).not.toContain(key);
-    expect(s.requests).toHaveLength(2);
+    expect(s.requests).toHaveLength(4);
     await expect(
       promisify(execFile)(process.execPath, [path], { env: { ...env, LLM_LIVE: '0' } }),
     ).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('disabled') });
-    expect(s.requests).toHaveLength(2);
-  });
+    expect(s.requests).toHaveLength(4);
+  }, 20000);
 });

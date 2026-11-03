@@ -20,7 +20,8 @@
     "dev:api": "pnpm --filter @foodops/api dev:api",
     "start:api": "pnpm --filter @foodops/api start:api",
     "smoke:api": "node scripts/smoke-api.mjs",
-    "llm:live": "node scripts/llm-live.mjs"
+    "llm:live": "node scripts/llm-live.mjs",
+    "smoke:chat": "node scripts/smoke-chat.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

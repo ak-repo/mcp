@@ -2,7 +2,7 @@
 
 Production foundation for the dashboard HTTP API. This package owns Fastify lifecycle, authentication, HTTP validation, logging, and response mapping. Business rules and database queries belong in `@foodops/core`; DTOs and domain validation belong in `@foodops/shared`. Never import from `apps/mcp-server`.
 
-Domain REST routes and health probes are implemented. See the [complete REST reference](../../docs/api.md) for inputs, responses, examples, and preview/execute approval. Ticket-authenticated SSE and the optional simulator are implemented. LLM adapters and the approval-gated agent loop are implemented as internal modules; chat/approval HTTP routes remain future work.
+Domain REST routes and health probes are implemented. See the [complete REST reference](../../docs/api.md) for inputs, responses, examples, and preview/execute approval. Ticket-authenticated SSE and the optional simulator are implemented. LLM adapters and the approval-gated agent loop are implemented as internal modules; chat, approval, provider and MCP discovery HTTP routes are implemented.
 
 ## Setup and commands
 
@@ -96,7 +96,7 @@ Use `POST /api/stream/ticket` with bearer auth, then `GET /api/stream?ticket=...
 
 ## LLM core
 
-Native Node 22 fetch helpers, normalized provider types, bounded FIFO concurrency, byte deadlines, safe errors and schema profiles live in `src/llm`. The internal agent loop is implemented; no chat routes are exposed. Missing model/key does not prevent API boot. Reuse a provider instance to share concurrency. Strict prompted-tool validation uses exact pinned Ajv and ajv-formats dependencies.
+Native Node 22 fetch helpers, normalized provider types, bounded FIFO concurrency, byte deadlines, safe errors and schema profiles live in `src/llm`. The agent loop is exposed by authenticated POST /api/chat SSE. Missing model/key does not prevent API boot. Reuse a provider instance to share concurrency. Strict prompted-tool validation uses exact pinned Ajv and ajv-formats dependencies.
 
 | Variable                    | Default            | Meaning                                                                                                                                                                              |
 | --------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -141,16 +141,39 @@ Audit history retention is controlled by CALL_LOG_RETENTION_DAYS (default 30). I
 
 `createLLM(config)` selects the adapter and tool mode; it performs no network I/O. `ProviderManager` holds active settings, supports atomic `update(patch)` and explicit `probe(signal)`, and exposes a secret-free `publicView()`. Keys are write-only; provider changes clear an unreplaced key and select a provider default URL. Existing calls retain captured settings and share concurrency with replacements. Settings are never persisted.
 
-Prompted mode sends no native tools, validates one JSON call against its original schema with strict Ajv, repairs once, then returns raw text if repair fails. It buffers output (1 MiB cap) and suppresses thinking. A probe lists models and checks a harmless n=7 call, native then prompted, with at most two generation requests, 256 output tokens each, no retries/repair and thinking off. Results cache for ten minutes and invalidate on updates. No diagnostic runs at boot. Anthropic defaults max_tokens to 1024, uses API version 2023-06-01, and disables outbound thinking to preserve the no-thinking-history policy. No HTTP settings/chat/approval routes are included yet.
+Prompted mode sends no native tools, validates one JSON call against its original schema with strict Ajv, repairs once, then returns raw text if repair fails. It buffers output (1 MiB cap) and suppresses thinking. A probe lists models and checks a harmless n=7 call, native then prompted, with at most two generation requests, 256 output tokens each, no retries/repair and thinking off. Results cache for ten minutes and invalidate on updates. No diagnostic runs at boot. Anthropic defaults max_tokens to 1024, uses API version 2023-06-01, and disables outbound thinking to preserve the no-thinking-history policy. Authenticated settings/chat/approval routes are implemented; see docs/api.md.
 
 See [the project specification](../../docs/FoodOps%20MCP%20Project%20Documentation%20%26%20MVP%20Plan.md#9-llm-provider-layer-ollama-first-adaptable-to-all) for the adapter matrix and probe shape. The existing opt-in live script remains Ollama-only.
 
 ### Internal MCP client and agent
 
-`runtime.mcp` connects lazily to MCP_URL with MCP_AUTH_TOKEN; `runtime.agent.run({ session_id?, message }, signal)` yields shared AgentEvent values. The trusted host resolves approval with `runtime.agent.approvals.resolve(runId, callId, decision)`. No resolver is exposed to the model or unauthenticated clients. The future HTTP layer must enforce operator authentication.
+`runtime.mcp` connects lazily to MCP_URL with MCP_AUTH_TOKEN; `runtime.agent.run({ session_id?, message }, signal)` yields shared AgentEvent values. The trusted host resolves approval with `runtime.agent.approvals.resolve(runId, callId, decision)`. No resolver is exposed to the model or unauthenticated clients. The HTTP layer enforces bearer authentication before admission or approval.
 
 Write controls (action, confirmation_token, idempotency_key) are hidden/stripped from model requests. The host previews first, publishes a safe summary and approval event, pauses, then executes only after approval using private captured controls. Lost execution responses retry once with the same key; unresolved outcomes require inspection. Rejection/expiry/cancel never executes. Model-facing results are JSON capped at 12 KiB; notes are always untrusted data.
 
 Defaults: MCP_URL=http://127.0.0.1:3001/mcp; MCP_AUTH_TOKEN unset until connecting; MCP_CALL_TIMEOUT_MS=10000; MCP_TOOLS_TTL_MS=60000; AGENT_MAX_ITERATIONS=6; AGENT_MAX_TOOL_CALLS=12; AGENT_RUN_TIMEOUT_MS=300000. The MCP key requires at least 32 non-whitespace characters. All millisecond settings are positive and at most 2147483647. Iteration/call limits are 1–100. Sessions: 100 slots, 30-minute idle TTL, 40 messages, one run each. Context estimation uses serialized characters/4, including tools. Runtime shutdown cancels/drains runs and approvals before closing MCP/DB handles.
 
-See project documentation section 10 for the event table/state diagram and docs/api.md for environment defaults. This phase adds no HTTP endpoints or database migrations. The existing workspace SDK 1.32.2 is reused under the user's explicit age-rule exception.
+See project documentation section 10 for the event table/state diagram and docs/api.md for environment defaults. The HTTP endpoints and SSE protocol are documented in docs/api.md; no database migrations are needed. The existing workspace SDK 1.32.2 is reused under the user's explicit age-rule exception.
+
+### Chat over HTTP and Ollama Cloud
+
+Set workspace `.env` values (keep the key private):
+
+```dotenv
+LLM_PROVIDER=ollama
+LLM_BASE_URL=https://ollama.com
+LLM_MODEL=your-exact-model-id
+LLM_API_KEY=your-private-key
+LLM_MAX_CONCURRENCY=1
+AGENT_MAX_CONCURRENT_RUNS=4
+RATE_LIMIT_CHAT_PER_MIN=20
+RATE_LIMIT_PROBE_PER_MIN=5
+```
+
+Use the exact model identifier returned by GET /api/providers/models for your account. Local and cloud model names/tags may differ; the placeholder above is not a model recommendation. Probe explicitly with POST /api/providers/test before chatting. Provider/free-tier quotas vary by account/model and may reject requests even when the API's local quota permits them; keep concurrency at one, honor rate-limit guidance, and retry later. Do not assume a fixed free allowance.
+
+POST /api/chat streams AgentEvent SSE through fetch. Show approval.required to the operator and POST approved/rejected to /api/chat/:runId/approve. Tokens and idempotency keys stay server-side. Disconnect or POST /api/chat/:runId/cancel stops the run; an in-flight write may have committed. Completed decisions replay safely for retained runs. Provider updates are in memory only, keys are write-only, and restart restores environment settings. Chat concurrency/rate limits are independent of approval/write quota.
+
+Build and run `pnpm smoke:chat` for a scripted loopback-only read/approve/write flow on a temporary DB. `LLM_LIVE=1 pnpm llm:live` probes real Ollama and asks a read-only question through a temporary seeded DB; this can consume provider quota and is excluded from unit tests. Never paste real keys in a command transcript or commit them.
+
+Native Ollama schema support is intentionally narrower than JSON Schema. In auto mode, a catalog containing unsupported native unions uses the strict prompted-tools protocol for that generation; explicit native mode still reports an unsupported schema. This preserves argument constraints rather than silently dropping them. See [official Ollama Cloud model naming](https://docs.ollama.com/cloud) and [API authentication](https://docs.ollama.com/api/authentication); API identifiers returned by tags can differ from CLI cloud aliases.

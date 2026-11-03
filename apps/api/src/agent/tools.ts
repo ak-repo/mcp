@@ -46,30 +46,36 @@ export function agentTools(
     }),
   );
 }
-export function cleanData(value: unknown, secrets: readonly string[] = []): unknown {
+export function cleanData(
+  value: unknown,
+  secrets: readonly string[] = [],
+  redactString: (text: string) => string = (text) => text,
+): unknown {
   if (typeof value === 'string')
-    return redact(value, secrets)
+    return redactString(redact(value, secrets))
       .split('')
       .filter((char) => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127)
       .join('');
-  if (Array.isArray(value)) return value.map((item) => cleanData(item, secrets));
+  if (Array.isArray(value)) return value.map((item) => cleanData(item, secrets, redactString));
   if (value !== null && typeof value === 'object')
     return Object.fromEntries(
       Object.entries(value)
         .filter(([key]) => !CONTROL_FIELDS.has(key))
-        .map(([key, child]) => [key, cleanData(child, secrets)]),
+        .map(([key, child]) => [key, cleanData(child, secrets, redactString)]),
     );
   return value;
 }
 export function modelResult(
   result: CallToolResult,
   secrets: readonly string[] = [],
+  redactString?: (text: string) => string,
 ): { text: string; summary: string; truncated: boolean; status: 'ok' | 'error' } {
   const value = cleanData(
     result.structuredContent ?? {
       content: result.content.filter((block) => block.type === 'text').map((block) => block.text),
     },
     secrets,
+    redactString,
   );
   let text = JSON.stringify(value);
   const structured = result.structuredContent;
@@ -100,7 +106,7 @@ export function modelResult(
     .join(' ');
   return {
     text,
-    summary: String(cleanData(summary, secrets)).slice(0, 1000),
+    summary: String(cleanData(summary, secrets, redactString)).slice(0, 1000),
     truncated,
     status: result.isError ? 'error' : 'ok',
   };

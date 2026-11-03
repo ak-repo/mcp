@@ -29,9 +29,11 @@ export interface AgentDependencies {
   sessions: Sessions;
   logger: Logger;
   now?: () => number;
+  redactText?: (text: string) => string;
 }
 export interface AgentInput {
   session_id?: string;
+  run_id?: string;
   message: string;
 }
 class AgentFailure extends Error {
@@ -48,7 +50,7 @@ export async function* runAgent(
   input: AgentInput,
   signal?: AbortSignal,
 ): AsyncGenerator<AgentEvent> {
-  const runId = randomUUID();
+  const runId = input.run_id ?? randomUUID();
   const sessionId = input.session_id ?? randomUUID();
   const now = deps.now ?? Date.now;
   const deadline = new AbortController();
@@ -62,7 +64,7 @@ export async function* runAgent(
   const secrets = [deps.config.LLM_API_KEY, deps.config.MCP_AUTH_TOKEN].filter((s): s is string =>
     Boolean(s),
   );
-  const safe = (value: unknown) => cleanData(value, secrets);
+  const safe = (value: unknown) => cleanData(value, secrets, deps.redactText);
   const check = () => {
     if (combined.aborted)
       throw new AgentFailure(
@@ -272,7 +274,7 @@ export async function* runAgent(
                       'MCP execution returned an invalid outcome; inspect the order before retrying.',
                     );
                 }
-                result = modelResult(executed, secrets);
+                result = modelResult(executed, secrets, deps.redactText);
               } catch (error) {
                 if (combined.aborted) check();
                 if (error instanceof McpClientError && error.retryable)
@@ -283,7 +285,9 @@ export async function* runAgent(
                 throw error;
               }
             }
-          } else result = modelResult(raw, secrets);
+          } else {
+            result = modelResult(raw, secrets, deps.redactText);
+          }
         }
         messages.push({
           role: 'tool',
@@ -329,7 +333,7 @@ export async function* runAgent(
         message: signal?.aborted
           ? 'Run cancelled; inspect any in-flight write before retrying.'
           : known
-            ? redact(error.message, secrets)
+            ? (deps.redactText ?? ((text: string) => text))(redact(error.message, secrets))
             : 'The agent could not complete this run',
         retryable: known ? error.retryable : false,
       };

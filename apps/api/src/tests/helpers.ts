@@ -8,7 +8,10 @@ import { loadConfig, type Config } from '../config.js';
 import { createLogger, openRuntime } from '../runtime.js';
 export const TOKEN = 'foodops-api-test-secret-32-characters';
 export const AUTH = { authorization: `Bearer ${TOKEN}` };
-export function fixture(overrides: Partial<Config> = {}) {
+export function fixture(
+  overrides: Partial<Config> = {},
+  options: NonNullable<Parameters<typeof openRuntime>[1]> = {},
+) {
   const directory = mkdtempSync(join(tmpdir(), 'foodops-api-'));
   const dbPath = join(directory, 'db.sqlite');
   const db = openWritable(dbPath);
@@ -30,7 +33,7 @@ export function fixture(overrides: Partial<Config> = {}) {
       logs.push(line);
     },
   });
-  const runtime = openRuntime(config, { logger });
+  const runtime = openRuntime(config, { ...options, logger });
   const app = buildApp({ config, runtime });
   return {
     directory,

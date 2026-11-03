@@ -14,6 +14,7 @@ export function createApprovals(options: { now?: () => number } = {}) {
     string,
     { value: PendingApproval; finish: (decision: ApprovalDecision) => void }
   >();
+  const decisions = new Map<string, { decision: ApprovalDecision; at: number }>();
   const now = options.now ?? Date.now;
   let closed = false;
   const key = (runId: string, callId: string) => JSON.stringify([runId, callId]);
@@ -30,6 +31,10 @@ export function createApprovals(options: { now?: () => number } = {}) {
         const timer = setTimeout(() => finish('expired'), Math.min(ttl, 2147483647));
         const finish = (decision: ApprovalDecision) => {
           if (!pending.delete(id)) return;
+          decisions.set(id, { decision, at: now() });
+          for (const [key, value] of decisions)
+            if (now() - value.at >= 1800000) decisions.delete(key);
+          while (decisions.size > 10000) decisions.delete(decisions.keys().next().value!);
           clearTimeout(timer);
           signal?.removeEventListener('abort', cancel);
           resolve(decision);
@@ -47,6 +52,16 @@ export function createApprovals(options: { now?: () => number } = {}) {
       if (!entry) return false;
       entry.finish(Date.parse(entry.value.expiresAt) <= now() ? 'expired' : decision);
       return true;
+    },
+    inspect(runId: string, callId: string): ApprovalDecision | 'pending' | undefined {
+      const id = key(runId, callId);
+      const entry = pending.get(id);
+      if (entry && Date.parse(entry.value.expiresAt) <= now()) entry.finish('expired');
+      if (pending.has(id)) return 'pending';
+      const previous = decisions.get(id);
+      if (previous && now() - previous.at < 1800000) return previous.decision;
+      decisions.delete(id);
+      return undefined;
     },
     cancelRun(runId: string) {
       for (const entry of pending.values())

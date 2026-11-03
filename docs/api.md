@@ -39,7 +39,7 @@ All domain successes, including writes and replays, use HTTP 200. Paths are case
 | GET | `/api/me` | Empty query; bearer auth | `{ actor: "ops", auth: "bearer" }` | Authentication plugin | 200 |
 | OPTIONS | `*`                                         | Valid Origin + Access-Control-Request-Method; optional Access-Control-Request-Headers | Empty preflight response  | CORS plugin                     | 204     |
 
-`GET /api/ready` returns 503 when its core read fails. The internal lazy MCP client/catalog and agent loop are implemented; chat, provider-settings and approval HTTP routes remain deferred. SSE and simulator endpoints are documented below.
+`GET /api/ready` returns 503 when its core read fails. Chat, provider settings, approvals and lazy MCP discovery are implemented below. SSE and simulator endpoints are documented below.
 
 ### Query filters
 
@@ -224,7 +224,7 @@ Audit feed sequences are internal; mcp.call has no SSE id and is not replayed af
 
 ### LLM configuration (provider layer only)
 
-The internal agent loop is implemented; no chat/settings/approval HTTP routes exist yet. Provider settings updates are in memory only. See project documentation section 9 for streaming, prompted tools and explicit probes. An omitted base URL selects the provider default; an explicit URL is preserved.
+Chat, settings and approval routes expose the in-memory provider/agent layer. Provider settings updates are in memory only. See project documentation section 9 for streaming, prompted tools and explicit probes. An omitted base URL selects the provider default; an explicit URL is preserved.
 
 | Variable                    | Default            | Meaning                                                                                                                                         |
 | --------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -251,10 +251,127 @@ The internal agent loop is implemented; no chat/settings/approval HTTP routes ex
 | `MCP_CALL_TIMEOUT_MS` | `10000` | Per-request timeout and maximum total timeout. |
 | `MCP_TOOLS_TTL_MS` | `60000` | Tool catalog freshness; manual refresh and reconnect invalidate it. |
 
-### Agent configuration (no HTTP routes yet)
+### Agent configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `AGENT_MAX_ITERATIONS` | `6` | 1–100 model iterations per run. |
 | `AGENT_MAX_TOOL_CALLS` | `12` | 1–100 model-requested calls; preview and execute are phases of one call. |
 | `AGENT_RUN_TIMEOUT_MS` | `300000` | Whole-run deadline, including approval waits. |
+
+## Chat, approvals, provider settings, and MCP discovery
+
+All endpoints below require exactly one bearer header. No credentials belong in URLs. Bodies and queries are strict; these routes accept no query parameters. Existing `/api/mcp/calls` is unchanged.
+
+| Method | Path | Query or JSON body | Response | Owner | Success |
+| --- | --- | --- | --- | --- | --- |
+| POST | `/api/chat` | `{session_id?, message}` | AgentEvent SSE | Agent host | 200 |
+| POST | `/api/chat/:runId/approve` | `{call_id, decision}` | `{run_id,call_id,decision}` | Approval registry | 200 |
+| POST | `/api/chat/:runId/cancel` | empty optional object | `{run_id,status:"cancelled"}` | Agent host | 200 |
+| GET | `/api/providers` | none | ProviderPublicConfig plus last_probe | Provider manager | 200 |
+| PUT | `/api/providers` | ProviderUpdate | ProviderPublicConfig | Provider manager | 200 |
+| GET | `/api/providers/models` | none | `{models:[{name,sizeBytes?}]}` | Active provider | 200 |
+| POST | `/api/providers/test` | empty optional object | ProbeResult | Explicit probe | 200 |
+| GET | `/api/mcp/tools` | none | `{tools:[{name,description,input_schema,kind}]}` | Sanitized discovery cache | 200 |
+| GET | `/api/mcp/status` | none | `{connected,last_error,tool_count}` | Lazy MCP client | 200 |
+
+`message` is a nonblank string of 1–4000 characters; optional `session_id` is a nonblank ID of at most 128 characters. Omit it for a new session. `run.started` announces run_id and session_id. One run may be active per session. Session histories are in memory, bounded to 100 sessions, 40 messages each and a 30-minute idle TTL.
+
+### Fetch streaming protocol
+
+Use POST fetch, not EventSource. Supply Authorization and Content-Type: application/json; read the response body as SSE. Event names equal AgentEvent.type, and each data object contains the complete AgentEvent including type. Heartbeats are `: heartbeat` comments every 15 seconds. There are no event IDs, Last-Event-ID replay, or reconnection semantics for chat. The separate database `/api/stream` protocol remains unchanged.
+
+```js
+const response = await fetch('/api/chat', {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ message: 'Cancel order O-0192 after showing the preview' }),
+  signal: abortController.signal,
+});
+if (!response.ok) throw await response.json();
+// Parse response.body as SSE, allowing arbitrary byte boundaries and heartbeat comments.
+```
+
+CORS, exposed headers, security headers, rate-limit headers and X-Request-Id are copied to the hijacked response. Writes respect socket backpressure; a 256 KiB blocked buffer closes/aborts the run rather than accumulating unlimited output. Client disconnect aborts the LLM, approval wait and MCP requests. An in-flight write may already have committed: cancellation does not imply rollback. Refresh order state before starting another write.
+
+Complete example transcript (IDs, preview fields and timings illustrative):
+
+```text
+event: run.started
+data: {"type":"run.started","run_id":"run-1","session_id":"session-1","provider":"ollama","model":"your-exact-model-id"}
+
+event: tool.call
+data: {"type":"tool.call","call_id":"call-1","name":"cancel_order","arguments":{"order_id":"O-0192","reason":"Operator request"},"kind":"write"}
+
+event: text.delta
+data: {"type":"text.delta","text":"Proposed cancellation of O-0192 and refund ₹494.35. Explicit approval is required."}
+
+event: approval.required
+data: {"type":"approval.required","call_id":"call-1","name":"cancel_order","preview":{"order_id":"O-0192","to_status":"cancelled","refund_amount_paise":49435,"refund_amount_display":"₹494.35"},"expires_at":"2026-11-03T12:05:00Z"}
+
+: heartbeat
+
+event: approval.resolved
+data: {"type":"approval.resolved","call_id":"call-1","decision":"approved"}
+
+event: tool.result
+data: {"type":"tool.result","call_id":"call-1","name":"cancel_order","status":"ok","latency_ms":1200,"summary":"Confirmed operation completed.","truncated":false}
+
+event: text.delta
+data: {"type":"text.delta","text":"The order was cancelled."}
+
+event: run.completed
+data: {"type":"run.completed","usage":{"promptTokens":500,"completionTokens":80},"iterations":2}
+```
+
+Between approval.required and approval.resolved, the model is paused. The operator separately sends:
+
+```http
+POST /api/chat/run-1/approve
+Authorization: Bearer <ADMIN_TOKEN>
+Content-Type: application/json
+
+{"call_id":"call-1","decision":"approved"}
+```
+
+Decision is only `approved` or `rejected`; use the cancel endpoint to stop a run. The response repeats `{run_id,call_id,decision}`. Identical decisions replay 200 without another execution; conflicting/expired/cancelled decisions return 409 CONFLICT. Unknown runs/call IDs return 404 NOT_FOUND. Completed runs retain identity for 30 minutes, at most 100 completed records; active records are never evicted. Expired retention returns 404. Cancellation repeats return 200; cancelling a normally completed run returns 409. Approval tokens and execution idempotency keys remain private to the host and are never accepted from the client.
+
+Before stream headers, errors use the standard JSON envelope. After headers, failures use terminal `run.error {kind,message,retryable}`; limits instead emit explanatory text and run.completed. Exactly one terminal AgentEvent ends normal delivery. Full AgentEvent schemas live in packages/shared; thinking.delta is streamed separately and never persisted in model history.
+
+### Provider settings and diagnostics
+
+ProviderPublicConfig is `{provider,base_url,model,tool_mode,effective_tool_mode,temperature,num_ctx,api_key_set,capabilities:{toolCalling,streaming,thinking}}`. `model` may be null. GET adds `last_probe` (current-config result within the ten-minute cache, or null). No API key is returned, including after PUT.
+
+ProviderUpdate accepts only optional `provider`, `base_url`, `model`, `tool_mode`, `temperature` (0–2), `num_ctx` (positive safe integer), write-only `api_key`, and `clear_api_key`. Set and clear together is invalid. URLs use the existing HTTP(S)/no-credentials/no-metadata restrictions. Updates validate atomically, invalidate probe results, affect subsequent runs, and never persist to disk. Changing provider selects its default URL and clears an old key unless replacements are supplied. Existing runs retain their captured provider instance.
+
+```json
+{"provider":"ollama","base_url":"https://ollama.com","model":"your-exact-model-id","tool_mode":"auto","api_key":"<server-only-key>"}
+```
+
+ProbeResult is `{ok,steps:[{name,ok,detail,latency_ms}],models,model_found,tool_calling,recommended_tool_mode,warnings}`. It lists models, verifies the exact model identifier, then tests a harmless native call, with prompted fallback if needed. At most two generation requests, thinking off, 256 output tokens each, no retries/repair, ten-minute caching. It never runs at boot. Failed probes return a safe 502 error; GET /providers exposes the retained failed result. Local API probe quota returns 429; upstream provider rate limiting returns 502 with a helpful rate-limit message. Models listing and discovery failures also return 502; secrets/provider bodies never cross the error boundary.
+
+MCP tools expose the same sanitized schemas given to the model, with host controls removed from write schemas and kind read/write derived from annotations. Catalog lookup may connect lazily. Status lookup does not connect. These do not expose the MCP bearer token.
+
+| Condition | HTTP / error code | Action |
+| --- | --- | --- |
+| Invalid chat/settings/approval input | 400 VALIDATION | Correct the strict body/schema. |
+| Missing/wrong/duplicate dashboard token | 401 UNAUTHORIZED | Send exactly one bearer header. |
+| Unknown run/call ID | 404 NOT_FOUND | Use IDs from this run's events. |
+| Session busy, conflicting decision, expired approval, completed cancel | 409 CONFLICT | Inspect state and start a new run/preview if necessary. |
+| Chat/probe quota or concurrent run cap | 429 LIMIT_EXCEEDED | Honor Retry-After; cancel/wait for a run. |
+| Provider auth/rate/model/network failure or MCP discovery unavailable | 502 INTERNAL | Follow safe message/hint; correct upstream settings or retry later. |
+| Runtime stopping | 503 INTERNAL | Retry after restart. |
+
+### Additional admission and rate-limit configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `AGENT_MAX_CONCURRENT_RUNS` | `4` | 1–100 active/reserved runs, including approval waits, per process. |
+| `RATE_LIMIT_CHAT_PER_MIN` | `20` | Positive per-IP chat starts/minute, independent of writes/tickets/probes. |
+| `RATE_LIMIT_PROBE_PER_MIN` | `5` | Positive per-IP explicit probes/minute. Cached probes still consume request quota. |
+
+All new endpoints also consume the overall bucket. Approval/cancel/PUT settings use the write bucket; chat quota cannot consume that bucket. LLM_MAX_CONCURRENCY (default 1) is separate from run admission: admitted runs may queue for generation or wait for approval. Runtime shutdown rejects admission, aborts/drains runs, cancels approvals, closes chat streams and MCP, then closes DB handles. All earlier LLM_*, AGENT_*, MCP_* and API variables remain documented in the configuration tables above.
+
+`pnpm smoke:chat` builds on local compiled modules, starts temporary MCP/API listeners and a scripted provider, reads late delivery data, approves cancellation over HTTP and verifies actor ai in order_events. It never contacts an external provider. Build first. `LLM_LIVE=1 pnpm llm:live` is opt-in and may incur usage: it runs a real Ollama probe plus one read-only seeded-DB question through a temporary MCP/API fixture. Only read tools are available, no write can execute, and printed output is redacted.
+
+In auto mode, Ollama catalogs with schemas that its native profile cannot represent use strict prompted tools for that call, even if the dummy native probe succeeds. Explicit native mode fails clearly. This avoids weakening JSON Schema constraints. Capabilities and effective_tool_mode describe the general selected mode; actual catalog compatibility may force this per-call fallback.

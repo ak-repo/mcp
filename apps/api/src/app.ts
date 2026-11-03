@@ -51,6 +51,8 @@ export function buildApp(deps: { config: Config; runtime: Runtime }): FastifyIns
   app.register(cors, { origins: config.WEB_ORIGIN });
   app.register(rateLimit, {
     max: config.RATE_LIMIT_PER_MIN,
+    chatMax: config.RATE_LIMIT_CHAT_PER_MIN,
+    probeMax: config.RATE_LIMIT_PROBE_PER_MIN,
     writeMax: config.RATE_LIMIT_WRITE_PER_MIN,
     ticketMax: config.RATE_LIMIT_TICKET_PER_MIN,
   });

@@ -1,3 +1,5 @@
+import chat from './chat.js';
+import providers from './providers.js';
 import me from './me.js';
 import type { FastifyPluginAsync } from 'fastify';
 import type { Runtime } from '../runtime.js';
@@ -14,7 +16,18 @@ const routes: FastifyPluginAsync<{ runtime: Runtime; replayLimit: number }> = as
   options,
 ) => {
   await app.register(stream, { runtime: options.runtime, replayLimit: options.replayLimit });
-  for (const plugin of [health, restaurants, orders, deliveries, metrics, mcp, simulator, me]) {
+  for (const plugin of [
+    health,
+    restaurants,
+    orders,
+    deliveries,
+    metrics,
+    mcp,
+    simulator,
+    me,
+    chat,
+    providers,
+  ]) {
     await app.register(plugin, { runtime: options.runtime });
   }
 };

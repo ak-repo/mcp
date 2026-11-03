@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import { ProviderUpdateSchema, type ProviderUpdate } from '@foodops/shared';
+export type { ProviderUpdate } from '@foodops/shared';
 import { LLMSettingsSchema, PROVIDER_BASE_URLS, type Config } from '../config.js';
 import { createAnthropicProvider } from './adapters/anthropic.js';
 import { createOllamaProvider } from './adapters/ollama.js';
@@ -6,6 +7,7 @@ import { createOpenAICompatibleProvider } from './adapters/openai-compatible.js'
 import type { ProviderDependencies } from './adapters/common.js';
 import { LLMError, redact } from './errors.js';
 import { ConcurrencyLimiter } from './limiter.js';
+import { sanitizeToolSchema } from './schema-sanitizer.js';
 import { registerNativeProvider, withPromptedTools } from './prompted-tools.js';
 import { cachedProbe, invalidateProbe, probeProvider, type ProbeResult } from './probe.js';
 import type { LLMProvider } from './types.js';
@@ -62,7 +64,20 @@ export function createLLM(input: Config, dependencies: ProviderDependencies = {}
     },
     listModels: (signal) => provider.listModels(signal),
     chat(messages, tools, options) {
-      return (mode() === 'prompted' ? prompted : provider).chat(messages, tools, options);
+      let selected = mode() === 'prompted' ? prompted : provider;
+      if (
+        config.LLM_TOOL_MODE === 'auto' &&
+        config.LLM_PROVIDER === 'ollama' &&
+        selected === provider
+      ) {
+        try {
+          for (const tool of tools) sanitizeToolSchema(tool.parameters, 'ollama');
+        } catch (error) {
+          if (!(error instanceof LLMError) || error.kind !== 'bad_request') throw error;
+          selected = prompted;
+        }
+      }
+      return selected.chat(messages, tools, options);
     },
   };
   registerNativeProvider(routed, provider);
@@ -72,19 +87,6 @@ export function createLLM(input: Config, dependencies: ProviderDependencies = {}
   };
 }
 
-const patchSchema = z
-  .object({
-    provider: z.enum(['ollama', 'openai-compatible', 'anthropic']).optional(),
-    base_url: z.string().optional(),
-    model: z.string().min(1).optional(),
-    tool_mode: z.enum(['auto', 'native', 'prompted']).optional(),
-    temperature: z.number().optional(),
-    num_ctx: z.number().optional(),
-    api_key: z.string().min(1).optional(),
-    clear_api_key: z.boolean().optional(),
-  })
-  .strict();
-export type ProviderUpdate = z.infer<typeof patchSchema>;
 export class ProviderManager {
   #config: Config;
   #active: ReturnType<typeof createLLM>;
@@ -103,8 +105,20 @@ export class ProviderManager {
   publicView() {
     return this.#active.describe();
   }
+  capture() {
+    const provider = this.provider;
+    const publicConfig = this.publicView();
+    const secrets = this.#config.LLM_API_KEY ? [this.#config.LLM_API_KEY] : [];
+    return { provider, publicConfig, redact: (text: string) => redact(text, secrets) };
+  }
+  lastProbe() {
+    return cachedProbe(this.#config) ?? null;
+  }
+  redact(text: string) {
+    return redact(text, this.#config.LLM_API_KEY ? [this.#config.LLM_API_KEY] : []);
+  }
   update(input: ProviderUpdate) {
-    const parsed = patchSchema.safeParse(input);
+    const parsed = ProviderUpdateSchema.safeParse(input);
     if (
       !parsed.success ||
       (parsed.data.api_key !== undefined && parsed.data.clear_api_key === true)

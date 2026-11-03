@@ -759,7 +759,7 @@ describe('write effects and failure contracts', () => {
     });
     await f.app.ready();
     const doc = readFileSync(new URL('../../../../docs/api.md', import.meta.url), 'utf8');
-    expect(routes.length).toBe(25);
+    expect(routes.length).toBe(34);
     const documented = doc
       .split('\n')
       .filter((line) => line.startsWith('|'))

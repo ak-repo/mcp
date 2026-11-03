@@ -14,6 +14,12 @@ export class HttpError extends Error {
     this.name = 'HttpError';
   }
 }
+/** Only application-owned, secret-free messages may cross the upstream boundary. */
+export class UpstreamHttpError extends HttpError {
+  constructor(message: string, hint: string) {
+    super(502, ErrorCode.INTERNAL, message, hint);
+  }
+}
 const statuses: Record<ErrorCode, number> = {
   [ErrorCode.VALIDATION]: 400,
   [ErrorCode.NOT_FOUND]: 404,
@@ -28,7 +34,11 @@ export function mapHttpError(error: unknown): { status: number; body: HttpErrorB
   let code: HttpErrorCode = ErrorCode.INTERNAL;
   let message = 'The request could not be completed';
   let hint = 'Retry later; contact the operator with X-Request-Id if the problem persists';
-  if (error instanceof AppError && error.code !== ErrorCode.INTERNAL) {
+  if (error instanceof UpstreamHttpError) {
+    status = 502;
+    message = error.message;
+    hint = error.hint;
+  } else if (error instanceof AppError && error.code !== ErrorCode.INTERNAL) {
     status = statuses[error.code];
     code = error.code;
     message = error.message;

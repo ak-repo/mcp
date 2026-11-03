@@ -19,6 +19,9 @@ describe('API configuration', () => {
   it('uses defaults and workspace-relative DB paths', () => {
     const directory = root();
     expect(loadConfig({ root: directory, env: { ADMIN_TOKEN: TOKEN } })).toEqual({
+      AGENT_MAX_CONCURRENT_RUNS: 4,
+      RATE_LIMIT_CHAT_PER_MIN: 20,
+      RATE_LIMIT_PROBE_PER_MIN: 5,
       AGENT_MAX_ITERATIONS: 6,
       AGENT_MAX_TOOL_CALLS: 12,
       AGENT_RUN_TIMEOUT_MS: 300000,

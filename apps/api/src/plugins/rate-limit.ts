@@ -5,11 +5,19 @@ import { ErrorCode } from '@foodops/shared';
 import { HttpError } from '../lib/http-errors.js';
 declare module 'fastify' {
   interface FastifyInstance {
+    chatRateLimit: onRequestAsyncHookHandler;
+    probeRateLimit: onRequestAsyncHookHandler;
     writeRateLimit: onRequestAsyncHookHandler;
     ticketRateLimit: onRequestAsyncHookHandler;
   }
 }
-export default fp<{ max: number; writeMax: number; ticketMax: number }>(
+export default fp<{
+  max: number;
+  writeMax: number;
+  ticketMax: number;
+  chatMax: number;
+  probeMax: number;
+}>(
   async (app, options) => {
     await app.register(rateLimit, {
       global: false,
@@ -35,12 +43,14 @@ export default fp<{ max: number; writeMax: number; ticketMax: number }>(
           throw new HttpError(
             429,
             ErrorCode.LIMIT_EXCEEDED,
-            `${name === 'write' ? 'Write' : 'Ticket'} rate limit exceeded`,
+            `${name} rate limit exceeded`,
             'Wait for the Retry-After interval before retrying',
           );
         }
       };
     };
+    app.decorate('chatRateLimit', bucket('chat', options.chatMax));
+    app.decorate('probeRateLimit', bucket('probe', options.probeMax));
     app.decorate('writeRateLimit', bucket('write', options.writeMax));
     app.decorate('ticketRateLimit', bucket('ticket', options.ticketMax));
   },

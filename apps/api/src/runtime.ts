@@ -1,4 +1,5 @@
-import { createAgentHost, type AgentHost } from './agent/host.js';
+import { createChatStreams } from './agent/streams.js';
+import { createAgentHost, type AgentHost, type AgentHostDependencies } from './agent/host.js';
 import { createMcpClient, type McpConnection } from './mcp/client.js';
 import { createSimulator, type Simulator } from './simulator/simulator.js';
 import { createChangeFeed, type ChangeFeed } from './events/change-feed.js';
@@ -17,8 +18,10 @@ import pino, { type Logger, type DestinationStream } from 'pino';
 import type { Config } from './config.js';
 
 export interface Runtime {
+  signal: AbortSignal;
   mcp: McpConnection;
   agent: AgentHost;
+  chatStreams: ReturnType<typeof createChatStreams>;
   services: Services;
   confirmation: ConfirmationSigner;
   simulator: Simulator;
@@ -79,7 +82,10 @@ export function createLogger(
     destination ?? pino.destination({ dest: 1, sync: true }),
   );
 }
-export function openRuntime(config: Config, options: { logger?: Logger } = {}): Runtime {
+export function openRuntime(
+  config: Config,
+  options: { logger?: Logger; agent?: AgentHostDependencies } = {},
+): Runtime {
   let write: DatabaseConnection | undefined;
   let read: DatabaseConnection | undefined;
   try {
@@ -104,7 +110,8 @@ export function openRuntime(config: Config, options: { logger?: Logger } = {}): 
       config.CALL_LOG_RETENTION_DAYS,
     );
     const mcp = createMcpClient(config);
-    const agent = createAgentHost(config, mcp, logger);
+    const agent = createAgentHost(config, mcp, logger, options.agent);
+    const chatStreams = createChatStreams();
     const tickets = createTickets();
     const streams = createStreams(config.SSE_MAX_STREAMS);
     const simulator = createSimulator(
@@ -114,17 +121,20 @@ export function openRuntime(config: Config, options: { logger?: Logger } = {}): 
       config.SIMULATOR_SEED,
       { maxActive: config.SIMULATOR_MAX_ACTIVE },
     );
+    const lifetime = new AbortController();
     let closed = false;
     let stopping = false;
     let stopped: Promise<void> | undefined;
     let shutdownPromise: Promise<void> | undefined;
     function stop(): Promise<void> {
       stopping = true;
+      lifetime.abort();
       if (!stopped) {
         // Both loops are deactivated synchronously, before either in-flight task is awaited.
         const simulatorStopped = simulator.stop();
         const feedStopped = feed.stop();
         const mcpStopped = agent.close().then(() => mcp.close());
+        chatStreams.close();
         streams.close();
         tickets.stop();
         stopped = Promise.all([simulatorStopped, feedStopped, mcpStopped]).then(() => undefined);
@@ -146,8 +156,10 @@ export function openRuntime(config: Config, options: { logger?: Logger } = {}): 
     }
     return {
       services,
+      signal: lifetime.signal,
       mcp,
       agent,
+      chatStreams,
       confirmation: createConfirmationSigner(
         config.API_CONFIRM_SECRET ? { secret: config.API_CONFIRM_SECRET } : {},
       ),

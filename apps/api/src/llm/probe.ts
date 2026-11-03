@@ -2,23 +2,10 @@ import { createHash } from 'node:crypto';
 import type { Config } from '../config.js';
 import { aborted, LLMError, redact } from './errors.js';
 import { unwrapPromptedTools, withPromptedTools } from './prompted-tools.js';
-import type { LLMProvider, ModelInfo, ToolDefinition } from './types.js';
+import type { LLMProvider, ToolDefinition } from './types.js';
 export type ToolMode = 'native' | 'prompted' | 'none';
-export interface ProbeStep {
-  name: 'list_models' | 'model_present' | 'tool_smoke';
-  ok: boolean;
-  detail: string;
-  latency_ms: number;
-}
-export interface ProbeResult {
-  ok: boolean;
-  steps: ProbeStep[];
-  models: ModelInfo[];
-  model_found: boolean;
-  tool_calling: ToolMode;
-  recommended_tool_mode: 'native' | 'prompted';
-  warnings: string[];
-}
+export type { ProbeStep, ProbeResult } from '@foodops/shared';
+import type { ProbeResult } from '@foodops/shared';
 const TTL = 10 * 60 * 1000;
 const cache = new Map<string, { expires: number; result: ProbeResult }>();
 export function providerConfigHash(config: Config): string {

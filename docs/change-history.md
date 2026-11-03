@@ -1093,7 +1093,7 @@ Git evidence below is inspected at baseline `3247bcf`; the initial repository co
 Copy this structure, replace the example values with facts, and allocate the next unused H-number. Keep full relevant prompts in a text fence or details block; redact credentials and mark redactions.
 
 ```markdown
-## H021: Descriptive task title
+## H022: Descriptive task title
 
 - Date: YYYY-MM-DD; agent/tool: actual name, or unknown.
 - Branch and base commit: actual branch/hash.
@@ -1222,3 +1222,46 @@ Exact follow-ups/approvals: “Host summary (Recommended)”; “Retry once (Rec
 - Plan assumptions retained: approval accepts approved/rejected; separate cancel route; completed run/decision records retained 30 minutes, at most 100 completed runs; chat 20/min and probe 5/min per-IP independent buckets; cap four active runs. Smoke uses loopback only and no external provider calls. Standard error envelopes retained, with safe trusted 502 mapping. Exact task prompt/final verification follow below.
 - Part A: shared strict HTTP contracts and tests; no Node imports. Verification pending.
 - Part A verified: shared typecheck/build and 46/46 tests passed (five new contract cases); shared commit pending.
+
+### H021 task prompt (verbatim)
+
+```text
+PLAN FIRST (short). Re-read docs section 8, apps/api routes/runtime/app, and the shared agent events. Output the route table, request/response schemas, rate-limit and concurrency design, and test list in under 40 lines, then STOP and wait for "approved".
+
+TASK: expose the agent over HTTP and wire everything into the runtime. Commits: "feat(shared): chat and provider schemas", "feat(api): chat and provider routes".
+
+Shared (browser-safe Zod): ChatRequest{session_id?, message 1..4000}, ApproveRequest{call_id, decision}, ProviderPublicConfig, ProviderUpdate (strict; api_key write-only; clear_api_key), ProbeResult, ModelList, McpToolCatalog, McpStatus.
+
+Routes (all behind bearer auth):
+- POST /api/chat: validates, creates a run, streams text/event-stream over the fetch response (copy headers after hijack exactly like routes/stream.ts so CORS applies). Event names equal AgentEvent types, data is the JSON payload, heartbeat comment every 15 s. Client disconnect aborts the run (LLM stream, pending approvals, MCP calls). Limits: AGENT_MAX_CONCURRENT_RUNS (default 4, else 429), new RATE_LIMIT_CHAT_PER_MIN bucket (default 20).
+- POST /api/chat/:runId/approve {call_id, decision}: resolves the pending approval; unknown run, wrong call_id, or already resolved -> 404/409 with clear codes; idempotent for repeats of the same decision.
+- POST /api/chat/:runId/cancel.
+- GET /api/providers (public config, last probe result, never the key); PUT /api/providers (ProviderManager atomic update, key write-only, in-memory only); GET /api/providers/models (provider listModels); POST /api/providers/test (probe, stricter rate bucket, 502-style mapped errors with helpful messages: invalid key, rate limited, model missing).
+- GET /api/mcp/tools (catalog with the sanitized schemas and read/write kind), GET /api/mcp/status. Keep the existing GET /api/mcp/calls.
+Wire provider manager, MCP client, session store, and approvals registry into Runtime start/shutdown (shutdown aborts runs and rejects pending approvals before closing handles). Update docs/api.md (chat protocol with a full example event transcript, provider settings, error table, config table incl. every LLM_* and AGENT_* variable) and keep the route-coverage test green. Update .env.example and the API README (Ollama Cloud example: LLM_PROVIDER=ollama, LLM_BASE_URL=https://ollama.com, model naming note, LLM_MAX_CONCURRENCY=1, free-tier limits note).
+Tests (fastify.inject plus a real listener for streaming): auth required everywhere; chat stream event order with the scripted provider; approve and reject through HTTP; disconnect aborts run; concurrency cap; chat rate limit; providers GET never leaks the key (grep the response and logs); PUT validation; probe success and failure mapping; models listing; MCP tools and status; shutdown mid-run is clean.
+Add pnpm smoke:chat (scripted provider, no network): starts MCP server and API on a temp seeded DB, chats "show late deliveries", then "cancel order X", prints the event transcript including approval, approves via HTTP, verifies the DB changed and the actor is 'ai' in order_events; exits non-zero on failure. Add the live opt-in pnpm llm:live scenario for my real Ollama key (LLM_LIVE=1): runs the probe and one read-only question against the seeded DB; never prints the key.
+GATES: typecheck, build, lint, test green; smoke:chat passes; list breaking/new contract items for the frontend; print the route table diff; STOP.
+```
+
+Exact implementation approval: “Implement the plan.”
+
+### H021 implementation progress
+
+- Shared contracts committed 38a767b. API changes uncommitted while verification proceeds.
+- Added nine authenticated routes with strict schemas, safe 502 errors, fetch SSE/CORS/header copying, 15-second heartbeat, backpressure/disconnect abort, atomic admission and idempotent retained approval decisions/cancellation. Added run cap 4, chat quota 20/min and probe quota 5/min. Runtime owns chat streams and aborts diagnostics as well as runs before closing resources. Provider updates stay in memory and keys remain write-only; captured redaction protects active runs after settings changes.
+- Scripted smoke passed: loopback MCP/API on a temporary seeded DB; late delivery read; preview unchanged; HTTP approval; cancellation verified with actor ai. Live opt-in script now probes and executes only read tools against a temporary seeded DB; unit test uses a fake Ollama server and never a real key.
+- Material compatibility refinement: the actual MCP date-union schemas cannot be represented by the strict Ollama native profile. The new real-catalog live test exposed this after a successful dummy native probe. Auto mode now falls back to existing strict prompted tools per call for unsupported Ollama catalogs; explicit native remains unchanged and fails clearly. No constraints were dropped and MCP contracts were not changed. This behavior is documented and regression-tested.
+- Intermediate verification: shared 46/46; focused HTTP/agent/registry initially 48/48; expanded HTTP/stream/registry/Ollama suite 70/70. The live CLI fake fixture initially failed with unsupported native date unions; fixed by the catalog-aware auto fallback and updated fixture protocol. Initial script lint required explicit Node/global imports; corrected. Final gates/results follow below.
+
+### H021 final outcome — 2026-11-03
+
+- Status: implemented on feat/phase-3; no merge to main. Commit evidence: 38a767b `feat(shared): chat and provider schemas`; API changes uncommitted at this final verification, included with this entry under `feat(api): chat and provider routes`.
+- Public contracts: nine additional bearer-authenticated routes, 25→34 registered routes including OPTIONS; no existing REST/MCP endpoint removed or renamed. POST chat uses fetch SSE (named AgentEvent frames, full JSON event payloads, no replay/IDs), 15-second heartbeat and disconnect cancellation. Approve/reject uses run_id/call_id with safe idempotent repeats; conflicting/expired decisions 409, unknown IDs 404. Cancel repeats safely; session conflicts 409; admission/rate limits 429. Provider keys are write-only, public config and matching probe results are secret-free, updates in memory only. Trusted upstream failures map to safe 502 INTERNAL envelopes. MCP discovery shows sanitized schemas/read-write kind; status does not connect.
+- New config: AGENT_MAX_CONCURRENT_RUNS=4 (1–100), RATE_LIMIT_CHAT_PER_MIN=20, RATE_LIMIT_PROBE_PER_MIN=5. Overall/write/ticket buckets retained; approval/cancel/settings consume write quota separately from chat/probe. No migrations or SQL/domain rules in routes, no seed changes, and no existing MCP output/schema/snapshot/test changes.
+- Runtime/agent: atomic pre-hijack reservations, retained completed run/decision identity for 30 minutes (100 completed runs), bounded socket buffering, session isolation, cleanup of never-consumed reservations, cancellation/drain before resource shutdown, and a shutdown signal for pending diagnostics. Provider snapshots retain private per-run redaction across settings updates; known secrets are redacted recursively from streamed/model tool data without manipulating serialized JSON syntax.
+- Paths: packages/shared/src/{schemas/chat.ts,schemas/chat.test.ts,index.ts}; apps/api/src/{agent/{approvals,host,run,tools,streams,streams.test}.ts,llm/{probe,registry,registry.test,adapters/ollama.test}.ts,routes/{chat,providers,mcp,index}.ts,plugins/rate-limit.ts,lib/http-errors.ts,app.ts,config.ts,runtime.ts,tests/{chat.test,config.test,helpers,routes.test}.ts}; .env.example; package.json; scripts/{chat-fixture,smoke-chat,llm-live}.mjs; API README; docs/api.md; project documentation; this history.
+- Final actual verification using Node 22.22.0/pnpm 10.34.9: `pnpm typecheck`, `pnpm build`, `pnpm lint`, `pnpm test` passed. Shared 46, core 272, MCP 144, API 379 = 841 tests across 55 files; no skipped final tests. Route-doc coverage passed with 34 registered routes. Focused HTTP/streams/registry/Ollama suite passed 70/70 before two final HTTP cases were included in the full gate. Formatting checks and git diff --check passed.
+- `pnpm smoke:chat` passed on the final compiled build: read O-EDGE-LATE (late=true), preview O-0192 without mutation, approve via HTTP, execute cancellation, verify cancelled status and actor ai. The script printed the complete event transcript without any token/key. Both processes and the seeded DB were temporary; no external inference requests.
+- `pnpm llm:live` now requires LLM_LIVE=1 and uses real selected Ollama configuration only when explicitly opted in; it probes and asks a read-only seeded-DB question with only read tools exposed. Real provider execution was not performed. The CLI integration test used a local fake Ollama endpoint and confirmed secrets never appear in stdout/stderr. Official Ollama cloud/auth docs were read to confirm API base, bearer auth and exact API model names versus CLI cloud aliases; README links those sources and does not promise fixed free-tier quotas.
+- Recorded failures/corrections: first full test run passed 840 tests but the expanded CLI process test exceeded its former five-second Vitest budget; it now has twenty seconds (child execution remains bounded), and the final full gate passes. One unused mock argument was fixed before final lint. The native catalog date-union failure and strict auto prompted fallback are described above; explicit native semantics remain unchanged. All requested gates are complete; no live-key test claimed.

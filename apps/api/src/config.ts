@@ -81,6 +81,9 @@ const llmBaseUrl = z.string().refine((value) => {
   }
 });
 export const ConfigFieldsSchema = z.object({
+  AGENT_MAX_CONCURRENT_RUNS: positiveInteger.pipe(z.number().max(100)).default(4),
+  RATE_LIMIT_CHAT_PER_MIN: positiveInteger.default(20),
+  RATE_LIMIT_PROBE_PER_MIN: positiveInteger.default(5),
   AGENT_MAX_ITERATIONS: positiveInteger.pipe(z.number().max(100)).default(6),
   AGENT_MAX_TOOL_CALLS: positiveInteger.pipe(z.number().max(100)).default(12),
   AGENT_RUN_TIMEOUT_MS: positiveInteger.pipe(z.number().max(2147483647)).default(300000),

@@ -215,3 +215,43 @@ it('probe performs one generation request on rate limiting despite configured re
   expect(await manager.probe()).toMatchObject({ ok: false, tool_calling: 'none' });
   expect(s.requests.filter((r) => r.method === 'POST')).toHaveLength(1);
 });
+
+it('auto Ollama uses strict prompted mode when native schemas cannot represent the real catalog', async () => {
+  const seen: unknown[] = [];
+  const fetcher: typeof fetch = async (_input, init) => {
+    seen.push(JSON.parse(String(init?.body)) as unknown);
+    return new Response(
+      JSON.stringify({
+        message: {
+          content: '{"tool_call":{"name":"date_tool","arguments":{"date":"2026-11-03"}}}',
+        },
+        done: true,
+        done_reason: 'stop',
+      }) + '\n',
+    );
+  };
+  const llm = createLLM(config({ LLM_PROVIDER: 'ollama', LLM_TOOL_MODE: 'auto' }), {
+    fetch: fetcher,
+  });
+  const tool = {
+    name: 'date_tool',
+    description: 'Date',
+    parameters: {
+      type: 'object',
+      properties: {
+        date: {
+          anyOf: [
+            { type: 'string', format: 'date' },
+            { type: 'string', format: 'date-time' },
+          ],
+        },
+      },
+      required: ['date'],
+    },
+  };
+  const events: StreamEvent[] = [];
+  for await (const event of llm.provider.chat([{ role: 'user', content: 'date' }], [tool]))
+    events.push(event);
+  expect(events[0]).toMatchObject({ type: 'tool_call', arguments: { date: '2026-11-03' } });
+  expect(seen[0]).not.toHaveProperty('tools');
+});
