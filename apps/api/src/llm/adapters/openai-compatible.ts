@@ -126,8 +126,23 @@ export function createOpenAICompatibleProvider(
             return;
           }
           const chunk = parse(chunkSchema, json(frame.data));
-          if (chunk.error)
-            throw httpError(chunk.error.code === 'rate_limit_exceeded' ? 429 : 500, '');
+          if (chunk.error) {
+            const kind = chunk.error.code ?? chunk.error.type;
+            const status =
+              kind === 'rate_limit_exceeded'
+                ? 429
+                : kind === 'invalid_api_key' || kind === 'authentication_error'
+                  ? 401
+                  : kind === 'model_not_found'
+                    ? 404
+                    : kind === 'context_length_exceeded' || kind === 'invalid_request_error'
+                      ? 400
+                      : 500;
+            throw httpError(
+              status,
+              kind === 'context_length_exceeded' ? 'context length exceeded' : '',
+            );
+          }
           if (!chunk.choices) throw protocolError();
           for (const choice of chunk.choices) {
             if (choice.index !== 0 || finished) throw protocolError();

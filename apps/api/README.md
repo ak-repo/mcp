@@ -96,26 +96,25 @@ Use `POST /api/stream/ticket` with bearer auth, then `GET /api/stream?ticket=...
 
 ## LLM core
 
-Native Node 22 fetch helpers, normalized provider types, bounded FIFO concurrency, byte deadlines, safe errors and schema profiles live in `src/llm`. No chat routes or agent loop are exposed. Missing model/key does not prevent API boot. Reuse a provider instance to share concurrency. No extra dependencies are installed.
+Native Node 22 fetch helpers, normalized provider types, bounded FIFO concurrency, byte deadlines, safe errors and schema profiles live in `src/llm`. No chat routes or agent loop are exposed. Missing model/key does not prevent API boot. Reuse a provider instance to share concurrency. Strict prompted-tool validation uses exact pinned Ajv and ajv-formats dependencies.
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `LLM_PROVIDER` | `ollama` | `ollama`, `openai-compatible`, or `anthropic`; only native Ollama implemented in this phase. |
-| `LLM_BASE_URL` | `https://ollama.com` | HTTP(S) base; native adapter appends `/api/chat` or `/api/tags`. No userinfo/query/fragment or link-local metadata targets. Local/private hosts allowed. |
-| `LLM_MODEL` | unset | Required only when chat starts, not at boot or model listing. |
-| `LLM_API_KEY` | unset | Optional bearer key; required by direct Ollama cloud. Never logged. |
-| `LLM_TOOL_MODE` | `auto` | Native adapter uses native tools for auto/native; prompted tools deferred and rejected explicitly. |
-| `LLM_NUM_CTX` | `16384` | Positive context window. |
-| `LLM_TEMPERATURE` | `0.2` | Finite number 0–2. |
-| `LLM_FIRST_BYTE_TIMEOUT_MS` | `60000` | Connect/headers/first body byte deadline, max 2147483647 ms. |
-| `LLM_IDLE_TIMEOUT_MS` | `30000` | Between-byte deadline, max 2147483647 ms. |
-| `LLM_MAX_CONCURRENCY` | `1` | Positive concurrent operations per reused provider; queue capped at 100. |
-| `LLM_MAX_RETRIES` | `2` | 0–10 retries, only before the first normalized event. |
-| `LLM_THINK` | `off` | Explicit boolean off/on; model support varies. |
-| `LLM_CONTEXT_BUDGET_TOKENS` | `12000` | Positive budget reserved for the later history-trimming layer. |
+| Variable                    | Default            | Meaning                                                                                                                                                                              |
+| --------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `LLM_PROVIDER`              | `ollama`           | `ollama`, `openai-compatible`, or `anthropic`; all three adapters implemented.                                                                                                       |
+| `LLM_BASE_URL`              | provider-dependent | Omitted selects https://ollama.com, https://api.openai.com/v1, or https://api.anthropic.com. No userinfo/query/fragment or link-local metadata targets. Local/private hosts allowed. |
+| `LLM_MODEL`                 | unset              | Required only when chat starts, not at boot or model listing.                                                                                                                        |
+| `LLM_API_KEY`               | unset              | Optional secret; bearer for Ollama/OpenAI-compatible, x-api-key for Anthropic. Never logged.                                                                                         |
+| `LLM_TOOL_MODE`             | `auto`             | Native, prompted JSON protocol, or auto using the latest matching explicit probe; default native.                                                                                    |
+| `LLM_NUM_CTX`               | `16384`            | Positive context window.                                                                                                                                                             |
+| `LLM_TEMPERATURE`           | `0.2`              | Finite number 0–2.                                                                                                                                                                   |
+| `LLM_FIRST_BYTE_TIMEOUT_MS` | `60000`            | Connect/headers/first body byte deadline, max 2147483647 ms.                                                                                                                         |
+| `LLM_IDLE_TIMEOUT_MS`       | `30000`            | Between-byte deadline, max 2147483647 ms.                                                                                                                                            |
+| `LLM_MAX_CONCURRENCY`       | `1`                | Positive concurrent operations per reused provider; queue capped at 100.                                                                                                             |
+| `LLM_MAX_RETRIES`           | `2`                | 0–10 retries, only before the first normalized event.                                                                                                                                |
+| `LLM_THINK`                 | `off`              | Off/on for Ollama; other adapters reject on.                                                                                                                                         |
+| `LLM_CONTEXT_BUDGET_TOKENS` | `12000`            | Positive budget reserved for the later history-trimming layer.                                                                                                                       |
 
 HTTP redirects are disabled. URL validation blocks literal link-local/metadata targets but does not prevent DNS rebinding. Retries apply only before any normalized event; callers must not retry a partially consumed stream. Errors use application-owned messages and do not echo provider bodies. Thinking is excluded from outbound history.
-
 
 ### Native Ollama adapter and opt-in live check
 
@@ -128,7 +127,7 @@ LLM_LIVE=1 pnpm llm:live
 
 The script loads workspace `.env` with process overrides, prints redacted model/stream results, requests a harmless dummy tool, executes nothing, and exits non-zero if no valid call is returned. It is excluded from tests. Without `LLM_LIVE=1` it refuses network access. No API server or initialized DB is needed.
 
-The adapter sends `think:false` when off and `think:true` when on; models that do not support the requested control may reject it. Thinking is streamed separately and omitted from outbound history. Native arguments are objects; defensive indexed string fragments are buffered until the terminal chunk. Ambiguous unindexed fragments fail. Call IDs are stable for a given request and ordinal, with provider IDs preserved. Capability flags describe adapter support; model probing remains planned. `auto` uses native tools until the future probe/fallback layer exists; `prompted` with tools fails explicitly.
+The adapter sends `think:false` when off and `think:true` when on; models that do not support the requested control may reject it. Thinking is streamed separately and omitted from outbound history. Native arguments are objects; defensive indexed string fragments are buffered until the terminal chunk. Ambiguous unindexed fragments fail. Call IDs are stable for a given request and ordinal, with provider IDs preserved. Capability flags describe adapter support, not every model. Explicit probes detect native or prompted tool support; auto defaults native until a matching probe recommends prompted.
 
 REST operations now require preview → explicit operator approval → execute with `confirmation_token` and Idempotency-Key. Previews add a token and five-minute expiry; the old confirm field is rejected. REST/MCP tokens are channel-separated. `API_CONFIRM_SECRET` is optional (32+ characters, no whitespace); unset uses a random process-local key. A stored semantic replay is returned before token verification, after auth and strict validation.
 
@@ -137,3 +136,11 @@ Rate limits are independent per IP: overall `RATE_LIMIT_PER_MIN=1200` (including
 Simulator backlog: `SIMULATOR_MAX_ACTIVE=60` (positive safe integer) prevents simulator placement when all active orders, including failed payments, reach the cap. External writers are not capped. Progression samples oldest untouched candidates per status (`updated_at ASC, id ASC`), excluding failed payments. Status adds `ticks_waiting_for_partner`, counting once per tick where any pickup candidate waits for a partner; other actions may still progress.
 
 Audit history retention is controlled by CALL_LOG_RETENTION_DAYS (default 30). Its feed cursor is monotonic across pruning. Runtime.shutdown() stops and awaits background work, closes streams/tickets, and then closes DB handles; close() returns the same shutdown promise and must be awaited. Close Fastify before disposing an embedded runtime so HTTP handlers can drain.
+
+### Provider registry and explicit diagnostics
+
+`createLLM(config)` selects the adapter and tool mode; it performs no network I/O. `ProviderManager` holds active settings, supports atomic `update(patch)` and explicit `probe(signal)`, and exposes a secret-free `publicView()`. Keys are write-only; provider changes clear an unreplaced key and select a provider default URL. Existing calls retain captured settings and share concurrency with replacements. Settings are never persisted.
+
+Prompted mode sends no native tools, validates one JSON call against its original schema with strict Ajv, repairs once, then returns raw text if repair fails. It buffers output (1 MiB cap) and suppresses thinking. A probe lists models and checks a harmless n=7 call, native then prompted, with at most two generation requests, 256 output tokens each, no retries/repair and thinking off. Results cache for ten minutes and invalidate on updates. No diagnostic runs at boot. Anthropic defaults max_tokens to 1024, uses API version 2023-06-01, and disables outbound thinking to preserve the no-thinking-history policy. No HTTP settings/chat routes or agent loop are included yet.
+
+See [the project specification](../../docs/FoodOps%20MCP%20Project%20Documentation%20%26%20MVP%20Plan.md#9-llm-provider-layer-ollama-first-adaptable-to-all) for the adapter matrix and probe shape. The existing opt-in live script remains Ollama-only.

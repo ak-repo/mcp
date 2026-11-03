@@ -94,6 +94,7 @@ export function createAnthropicProvider(
         model: config.LLM_MODEL,
         ...messagesFor(messages),
         stream: true,
+        thinking: { type: 'disabled' },
         max_tokens: settings.maxTokens ?? 1024,
         temperature: settings.temperature,
         ...(tools.length

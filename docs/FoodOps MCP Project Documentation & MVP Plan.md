@@ -297,52 +297,61 @@ The API talks to models only through an internal `LLMProvider` interface. Nothin
 
 Normalized messages use `system`, `user`, `assistant` and `tool` roles. Assistant `toolCalls` contain id, name and object arguments; tool results carry toolCallId, toolName and content. Tools have name, description and JSON Schema parameters. `LLMProvider.chat()` returns an async iterable of `text_delta`, `thinking_delta`, `tool_call`, `usage`, and `done`; failures throw `LLMError`. Capabilities are adapter-level `toolCalling`, `streaming`, and `thinking`, not a guarantee for every model. Thinking is never included in outbound history.
 
-### 9.2 Adapters
+### 9.2 Adapters and registry
 
-The core primitives are implemented in `apps/api/src/llm`. Native `ollama` is implemented using `/api/chat` streaming NDJSON and `/api/tags`; `openai-compatible` and `anthropic` remain planned. No chat routes, agent loop, provider probe, automatic prompted-tools fallback, or context trimming are implemented in this phase. Reuse a provider instance to share its concurrency limiter. Provider creation does not perform network I/O.
+All adapters use Node 22 global fetch. Creation performs no network I/O. No chat/settings routes, agent loop, or context trimming are implemented yet.
+
+| Adapter           | Chat                        | Models                    | Native tools                                             | Thinking                                  |
+| ----------------- | --------------------------- | ------------------------- | -------------------------------------------------------- | ----------------------------------------- |
+| ollama            | POST /api/chat, NDJSON      | GET /api/tags             | Object calls; defensive indexed fragments                | Off/on; separate deltas                   |
+| openai-compatible | POST /chat/completions, SSE | GET /models               | Indexed argument fragments, emitted at choice completion | Outbound unsupported                      |
+| anthropic         | POST /v1/messages, SSE      | GET /v1/models, paginated | tool_use plus input_json_delta, emitted at block stop    | Outbound disabled; incoming deltas parsed |
+
+OpenAI-compatible bases include the version prefix, e.g. https://api.openai.com/v1. Optional keys use Authorization Bearer. Usage-only chunks are consumed before [DONE]. Anthropic uses x-api-key and pinned anthropic-version 2023-06-01, separate system content, assistant tool_use blocks, and merged user tool_result blocks. Thinking and signatures never enter outbound history. Anthropic think:on is rejected because normalized history does not retain signed thinking blocks. Compatible endpoints/models may reject optional usage or generation parameters; errors are reported without guessing or silently resending incompatible requests.
+
+`createLLM(config)` returns `{ provider, describe() }`. Native, prompted, and auto are supported. Auto uses the latest unexpired matching probe recommendation, defaulting to native. Providers own retry handling; wrappers do not add nested retries or limiter acquisitions. Reuse instances to share concurrency. `ChatOptions.maxRetries` can lower, never increase, the configured retry budget.
+
+`ProviderManager` exposes `provider`, `publicView()`, `update(patch)`, and explicit `probe(signal)`. Updates accept provider, base_url, model, tool_mode, temperature, num_ctx, write-only api_key, and clear_api_key. They are strict, validate the whole candidate LLM settings using boot validators, and replace active settings atomically. Setting and clearing a key together is rejected. Switching provider clears an old credential unless a replacement is supplied and chooses the new default base unless overridden. Existing streams retain captured settings; replacements share the manager's concurrency budget. No persistence occurs. Views expose api_key_set only; secrets use private fields and never enter diagnostics. Invalid updates preserve all active settings. Probe results from old settings cannot overwrite a newer configuration.
 
 ### 9.3 Configuration
 
-Process environment overrides workspace-root `.env`. Secrets stay server-side. Settings overrides remain planned.
+Process environment overrides workspace-root `.env`. Explicit URLs are preserved. Omitted URLs select the provider default. Settings overrides are in memory only.
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `LLM_PROVIDER` | `ollama` | `ollama`, `openai-compatible`, or `anthropic`; only native Ollama implemented in this phase. |
-| `LLM_BASE_URL` | `https://ollama.com` | HTTP(S) base; native adapter appends `/api/chat` or `/api/tags`. No userinfo/query/fragment or link-local metadata targets. Local/private hosts allowed. |
-| `LLM_MODEL` | unset | Required only when chat starts, not at boot or model listing. |
-| `LLM_API_KEY` | unset | Optional bearer key; required by direct Ollama cloud. Never logged. |
-| `LLM_TOOL_MODE` | `auto` | Native adapter uses native tools for auto/native; prompted tools deferred and rejected explicitly. |
-| `LLM_NUM_CTX` | `16384` | Positive context window. |
-| `LLM_TEMPERATURE` | `0.2` | Finite number 0–2. |
-| `LLM_FIRST_BYTE_TIMEOUT_MS` | `60000` | Connect/headers/first body byte deadline, max 2147483647 ms. |
-| `LLM_IDLE_TIMEOUT_MS` | `30000` | Between-byte deadline, max 2147483647 ms. |
-| `LLM_MAX_CONCURRENCY` | `1` | Positive concurrent operations per reused provider; queue capped at 100. |
-| `LLM_MAX_RETRIES` | `2` | 0–10 retries, only before the first normalized event. |
-| `LLM_THINK` | `off` | Explicit boolean off/on; model support varies. |
-| `LLM_CONTEXT_BUDGET_TOKENS` | `12000` | Positive budget reserved for the later history-trimming layer. |
+| Variable                    | Default            | Meaning                                                                                                                                                                    |
+| --------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LLM_PROVIDER`              | `ollama`           | ollama, openai-compatible, anthropic.                                                                                                                                      |
+| `LLM_BASE_URL`              | provider-dependent | https://ollama.com; https://api.openai.com/v1; https://api.anthropic.com. HTTP(S), no userinfo/query/fragment or link-local metadata targets. Local/private hosts allowed. |
+| `LLM_MODEL`                 | unset              | Required only when chat starts, not at boot or model listing.                                                                                                              |
+| `LLM_API_KEY`               | unset              | Optional server-only credential; cloud providers normally require one. Never logged or returned.                                                                           |
+| `LLM_TOOL_MODE`             | `auto`             | native, prompted, or auto using the latest matching probe.                                                                                                                 |
+| `LLM_NUM_CTX`               | `16384`            | Positive context window; sent by native Ollama only.                                                                                                                       |
+| `LLM_TEMPERATURE`           | `0.2`              | Finite number 0–2; provider/model restrictions may be narrower.                                                                                                            |
+| `LLM_FIRST_BYTE_TIMEOUT_MS` | `60000`            | Connect/headers/first body byte deadline, max 2147483647 ms.                                                                                                               |
+| `LLM_IDLE_TIMEOUT_MS`       | `30000`            | Between-byte deadline, max 2147483647 ms.                                                                                                                                  |
+| `LLM_MAX_CONCURRENCY`       | `1`                | Positive concurrent operations; queue capped at 100. Manager shares slots across configuration replacements.                                                               |
+| `LLM_MAX_RETRIES`           | `2`                | 0–10 retries, only before the first normalized event. Probes set zero.                                                                                                     |
+| `LLM_THINK`                 | `off`              | Native Ollama off/on. Other adapters reject on. Thinking is never sent back.                                                                                               |
+| `LLM_CONTEXT_BUDGET_TOKENS` | `12000`            | Positive budget reserved for later history trimming.                                                                                                                       |
 
-Retries use exponential full jitter (500 ms base, 30 s cap), honor Retry-After seconds/dates, and are abortable. Only retryable failures before any event are retried; partial streams are never replayed. The queue holds its slot through retries. Error kinds are auth, rate_limit, timeout, model_not_found, context_overflow, bad_request, provider_error, network, aborted. Provider bodies and raw network error text are never exposed.
+Retries use exponential full jitter (500 ms base, 30 s cap), honor Retry-After seconds/dates, and are abortable. Only retryable failures before any event are retried; partial streams are never replayed. A slot is held through transport retries. Error kinds remain auth, rate_limit, timeout, model_not_found, context_overflow, bad_request, provider_error, network, aborted. Messages never echo provider bodies or raw network errors. Anthropic's default output cap is 1024 when maxTokens is omitted; OpenAI-compatible uses max_tokens only when supplied. URL validation is not DNS-rebinding protection; redirects are disabled.
 
-Schema profiles inline local refs, reject cycles/external refs, remove metadata, and flatten a single non-null union into an optional property. Ollama drops additionalProperties and rejects general unions; OpenAI/Anthropic preserve boolean additionalProperties and non-null unions. Unsupported structural constraints fail rather than silently weaken validation. Output is deterministic and input is not mutated.
+### 9.4 Schemas and prompted tools
 
-URL validation is not DNS-rebinding protection. Redirects are disabled. Thinking history exclusion is an intentional project policy despite Ollama examples preserving it. Compared with the original plan, native Ollama is the default, model selection is deferred until chat, separate byte deadlines replace LLM_TIMEOUT_MS, and errors throw instead of emitting an error event.
+Native schema profiles inline local refs, reject cycles/external refs, remove metadata, and flatten a single non-null union into an optional property. Ollama drops additionalProperties and rejects general unions; OpenAI/Anthropic preserve boolean additionalProperties and non-null unions. Unsupported structural constraints fail rather than silently weaken validation. Output is deterministic and input is not mutated.
 
-### 9.4 Provider differences the adapters must absorb
+`withPromptedTools(provider)` sends no native tools. It injects a catalog and accepts exactly one JSON object: `{"tool_call":{"name":"...","arguments":{}}}` or `{"final":"..."}`. A string/escape-aware scanner extracts the first object through leading prose or fences. One call per turn is allowed. Argument validation uses the original schema with strict Ajv (draft-07 or explicit 2020-12, standard formats), without coercion/defaults/property removal or external reference fetching. Unsupported schemas fail before a request. Historical calls/results become delimited textual data; no tools execute in this layer.
 
-- **Context size:** Ollama's default context is small (historically 2,048–4,096 tokens). With 12 tool schemas plus history, it silently truncates. Always send `num_ctx` (via the native adapter, or the server-side `OLLAMA_CONTEXT_LENGTH` setting when using the OpenAI-compatible route) and trim history to fit.
-- **Tool-calling support varies by model.** Use models tagged for tools (Llama 3.1+, Qwen 2.5/3, Mistral-family tool variants). Prefer 7–8B or larger; smaller models are unreliable at multi-step tool use.
-- **Planned prompted-tools fallback:** for models without native tool calling, the adapter injects tool descriptions into the system prompt, asks for a strict JSON tool-call object, parses it, validates arguments with Zod, and retries once with a repair message on failure. Selected automatically when `LLM_TOOL_MODE=auto` and the probe fails.
-- **Streaming of tool calls:** some providers send a complete tool call in one chunk, others stream argument fragments. The adapter buffers and emits one `tool_call` event only when arguments parse as complete JSON.
-- **Schema dialects:** some providers reject parts of JSON Schema. A sanitizer strips `$schema` and `additionalProperties`, inlines `$ref`, and flattens simple `anyOf` before sending tools.
-- **Rate limits (free tiers):** honor `Retry-After`, exponential backoff with jitter, concurrency queue, clear UI message on exhaustion.
-- **Errors:** every adapter maps vendor errors to a small set (`auth`, `rate_limit`, `timeout`, `model_not_found`, `context_overflow`, `provider_error`) so the UI shows consistent messages.
+Output buffering is capped at 1 MiB. Invalid JSON, tool names, or arguments trigger one repair with bounded validation details. A second invalid response becomes raw text. Transport errors propagate without repair. Usage is aggregated across attempts; one terminal event is emitted; protocol text and thinking are buffered/suppressed. Prompted mode does not expose thinking capability.
 
-### 9.5 Probe
+### 9.5 Explicit provider probe
 
-The opt-in `LLM_LIVE=1 pnpm llm:live` script lists models and requests one harmless dummy tool call, without executing it. Build first. It uses workspace LLM configuration, never prints the key, and is excluded from tests. Native adapter fixtures use only local fake HTTP servers. Native tool calls use object arguments; indexed string fragments are supported defensively, but ambiguous unindexed fragments fail. Provider IDs are preserved and otherwise deterministic request/ordinal IDs are generated.
+`probeProvider(provider, config, signal)` returns `{ ok, steps, models, model_found, tool_calling, recommended_tool_mode, warnings }`. Each step has name, ok, detail, latency_ms. It lists models, checks the exact configured identifier, then asks the harmless record_number tool for n=7. Nothing executes. A valid native call wins; an unsupported/invalid native response permits prompted fallback. Auth/rate/network/timeout errors stop rather than spending a fallback request.
 
+Generation is capped at two actual requests: one native plus one prompted. Retries and prompted repair are disabled; temperature=0, thinking=false, maxTokens=256. This bounds output requests/tokens, not currency cost. Results (including failures, excluding aborts) are cached for ten minutes by configuration hash including credential identity; cache size is bounded at 100 configurations. Updates invalidate cached results. Probes never run at boot. API routes and UI remain future work.
 
-**Planned:** `POST /api/providers/test` runs: (1) list models (`/models` or `/api/tags`), (2) check the configured model exists, (3) a one-shot tool-call smoke test with a dummy tool. It returns detected capabilities and a recommended `LLM_TOOL_MODE`. The Settings page shows the result.
+The opt-in `LLM_LIVE=1 pnpm llm:live` remains an Ollama-only diagnostic, excluded from tests. Build first; it never executes its dummy tool or prints the key. Unit tests use local fake HTTP servers only.
+
+Official protocol references: [OpenAI Chat Completions streaming](https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events), [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create). Model support and compatibility with third-party OpenAI endpoints remain runtime probe results, not adapter guarantees.
 
 ## 10. Agent Loop (apps/api)
 

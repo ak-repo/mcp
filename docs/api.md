@@ -221,3 +221,23 @@ Process environment overrides workspace-root `.env`. Empty API_CONFIRM_SECRET me
 | `CALL_LOG_RETENTION_DAYS` | `30` | 1–1000000 days; audit history pruned hourly, together with 24-hour change history. |
 
 Audit feed sequences are internal; mcp.call has no SSE id and is not replayed after reconnect. REST history pagination is unchanged. Apply migration 0004 before restarting the API against an existing database. No historical migration is edited.
+
+### LLM configuration (provider layer only)
+
+No chat/settings routes or agent loop exist yet. Provider settings updates are in memory only. See project documentation section 9 for streaming, prompted tools and explicit probes. An omitted base URL selects the provider default; an explicit URL is preserved.
+
+| Variable                    | Default            | Meaning                                                                                                                                         |
+| --------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LLM_PROVIDER`              | `ollama`           | ollama, openai-compatible, anthropic.                                                                                                           |
+| `LLM_BASE_URL`              | provider-dependent | https://ollama.com; https://api.openai.com/v1; https://api.anthropic.com. HTTP(S), no userinfo/query/fragment or metadata/link-local addresses. |
+| `LLM_MODEL`                 | unset              | Required at chat time, not boot. Exact model identifier.                                                                                        |
+| `LLM_API_KEY`               | unset              | Server-only credential; manager exposes only api_key_set.                                                                                       |
+| `LLM_TOOL_MODE`             | `auto`             | native, prompted, auto; auto defaults native until an explicit probe recommends prompted.                                                       |
+| `LLM_NUM_CTX`               | `16384`            | Positive context size; sent natively by Ollama only.                                                                                            |
+| `LLM_TEMPERATURE`           | `0.2`              | 0–2; individual providers/models may restrict support.                                                                                          |
+| `LLM_FIRST_BYTE_TIMEOUT_MS` | `60000`            | Connect/headers/first-byte deadline.                                                                                                            |
+| `LLM_IDLE_TIMEOUT_MS`       | `30000`            | Between-byte deadline.                                                                                                                          |
+| `LLM_MAX_CONCURRENCY`       | `1`                | Shared manager concurrency across replacements; queue cap 100.                                                                                  |
+| `LLM_MAX_RETRIES`           | `2`                | 0–10; retry only before the first normalized event. Probes override to zero.                                                                    |
+| `LLM_THINK`                 | `off`              | Ollama only outbound. Anthropic/OpenAI-compatible reject on; thinking never enters outbound history.                                            |
+| `LLM_CONTEXT_BUDGET_TOKENS` | `12000`            | Reserved for future history trimming.                                                                                                           |

@@ -14,7 +14,10 @@ export function redact(text: string, secrets: readonly string[] = []): string {
     result = result.split(secret).join('[REDACTED]');
   return result
     .replace(/\bBearer\s+[^\s"',;}]+/gi, 'Bearer [REDACTED]')
-    .replace(/(authorization["']?\s*[:=]\s*["']?)[^\r\n"'}]+/gi, '$1[REDACTED]');
+    .replace(
+      /((?:authorization|x-api-key|api_key)["']?\s*[:=]\s*["']?)[^\r\n"'}]+/gi,
+      '$1[REDACTED]',
+    );
 }
 export class LLMError extends Error {
   constructor(

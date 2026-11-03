@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { ConfigSchema } from '../config.js';
+import { ConfigFieldsSchema } from '../config.js';
 import { loadConfig } from '../config.js';
 import { TOKEN } from './helpers.js';
 const directories: string[] = [];
@@ -136,6 +136,6 @@ it('accepts simulator startup and bounded live-update configuration', () => {
 
 it('documents every API environment variable', () => {
   const documentation = readFileSync(new URL('../../../../docs/api.md', import.meta.url), 'utf8');
-  for (const key of Object.keys(ConfigSchema.shape))
+  for (const key of Object.keys(ConfigFieldsSchema.shape))
     expect(documentation).toContain('`' + key + '`');
 });

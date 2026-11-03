@@ -7,3 +7,5 @@ export * from './adapters/ollama.js';
 export * from './adapters/openai-compatible.js';
 export * from './adapters/anthropic.js';
 export * from './prompted-tools.js';
+export * from './probe.js';
+export * from './registry.js';

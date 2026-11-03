@@ -80,9 +80,9 @@ const llmBaseUrl = z.string().refine((value) => {
     return false;
   }
 });
-export const ConfigSchema = z.object({
+export const ConfigFieldsSchema = z.object({
   LLM_PROVIDER: z.enum(['ollama', 'openai-compatible', 'anthropic']).default('ollama'),
-  LLM_BASE_URL: llmBaseUrl.default('https://ollama.com'),
+  LLM_BASE_URL: llmBaseUrl.optional(),
   LLM_MODEL: optionalText,
   LLM_API_KEY: z.preprocess(
     (value) => (value === '' ? undefined : value),
@@ -148,6 +148,33 @@ export const ConfigSchema = z.object({
   RATE_LIMIT_WRITE_PER_MIN: positiveInteger.default(60),
   RATE_LIMIT_TICKET_PER_MIN: positiveInteger.default(60),
 });
+export const PROVIDER_BASE_URLS = {
+  ollama: 'https://ollama.com',
+  'openai-compatible': 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com',
+} as const;
+export const LLMSettingsSchema = ConfigFieldsSchema.pick({
+  LLM_PROVIDER: true,
+  LLM_BASE_URL: true,
+  LLM_MODEL: true,
+  LLM_API_KEY: true,
+  LLM_TOOL_MODE: true,
+  LLM_NUM_CTX: true,
+  LLM_TEMPERATURE: true,
+  LLM_FIRST_BYTE_TIMEOUT_MS: true,
+  LLM_IDLE_TIMEOUT_MS: true,
+  LLM_MAX_CONCURRENCY: true,
+  LLM_MAX_RETRIES: true,
+  LLM_THINK: true,
+  LLM_CONTEXT_BUDGET_TOKENS: true,
+}).transform((value) => ({
+  ...value,
+  LLM_BASE_URL: value.LLM_BASE_URL ?? PROVIDER_BASE_URLS[value.LLM_PROVIDER],
+}));
+export const ConfigSchema = ConfigFieldsSchema.transform((value) => ({
+  ...value,
+  LLM_BASE_URL: value.LLM_BASE_URL ?? PROVIDER_BASE_URLS[value.LLM_PROVIDER],
+}));
 export type Config = z.infer<typeof ConfigSchema>;
 export function loadConfig(options: { root?: string; env?: NodeJS.ProcessEnv } = {}): Config {
   const root = options.root ?? WORKSPACE_ROOT;
@@ -164,7 +191,7 @@ export function loadConfig(options: { root?: string; env?: NodeJS.ProcessEnv } =
     );
   }
   const values = Object.fromEntries(
-    Object.keys(ConfigSchema.shape).map((key) => [key, env[key] ?? file[key]]),
+    Object.keys(ConfigFieldsSchema.shape).map((key) => [key, env[key] ?? file[key]]),
   );
   const parsed = ConfigSchema.safeParse(values);
   if (!parsed.success) {

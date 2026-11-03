@@ -30,3 +30,7 @@ describe('LLM errors', () => {
     expect(httpError(500, 'my-secret').message).not.toContain('my-secret');
   });
 });
+
+it('redacts Anthropic and manager credential fields', () => {
+  expect(redact('x-api-key: private api_key=private')).not.toContain('private');
+});

@@ -177,3 +177,24 @@ describe('prompted tools', () => {
     });
   });
 });
+
+it('validates standard formats strictly', async () => {
+  const dateTool: ToolDefinition = {
+    name: 'record',
+    description: 'Date',
+    parameters: {
+      type: 'object',
+      properties: { date: { type: 'string', format: 'date-time' } },
+      required: ['date'],
+      additionalProperties: false,
+    },
+  };
+  const f = fixture([
+    '{"tool_call":{"name":"record","arguments":{"date":"bad-date"}}}',
+    '{"tool_call":{"name":"record","arguments":{"date":"2026-11-03T12:00:00Z"}}}',
+  ]);
+  expect((await collect(withPromptedTools(f.provider), [dateTool]))[0]).toMatchObject({
+    type: 'tool_call',
+    arguments: { date: '2026-11-03T12:00:00Z' },
+  });
+});

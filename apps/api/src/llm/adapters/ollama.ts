@@ -4,7 +4,7 @@ import type { Config } from '../../config.js';
 import { httpError, LLMError, protocolError } from '../errors.js';
 import { openHttp, readNdjson, withRetry } from '../http.js';
 import { ConcurrencyLimiter } from '../limiter.js';
-import type { ProviderDependencies } from './common.js';
+import { generation, type ProviderDependencies } from './common.js';
 import { sanitizeToolSchema } from '../schema-sanitizer.js';
 import type {
   ChatOptions,
@@ -101,6 +101,7 @@ export function createOllamaProvider(
       tools: readonly ToolDefinition[],
       options: ChatOptions = {},
     ): AsyncIterable<StreamEvent> {
+      generation(config, options);
       if (!config.LLM_MODEL)
         throw new LLMError('bad_request', 'Set LLM_MODEL before starting a chat', false);
       if (config.LLM_PROVIDER !== 'ollama')

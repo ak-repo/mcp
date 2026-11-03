@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Ajv, type ValidateFunction } from 'ajv';
 import { Ajv2020 } from 'ajv/dist/2020.js';
+import { default as formatsModule } from 'ajv-formats';
 import { LLMError, protocolError, redact } from './errors.js';
 import type {
   JsonSchemaObject,
@@ -52,6 +53,9 @@ function compile(tools: readonly ToolDefinition[]): Map<string, ValidateFunction
   };
   const draft7 = new Ajv(options);
   const draft2020 = new Ajv2020(options);
+  // CommonJS interop exposes .default under NodeNext's module typing.
+  formatsModule.default(draft7);
+  formatsModule.default(draft2020);
   const validators = new Map<string, ValidateFunction>();
   for (const tool of tools) {
     if (!tool.name || validators.has(tool.name))
@@ -125,17 +129,30 @@ function decode(
   }
   return { name: call.name, arguments: call.arguments };
 }
+const nativeProviders = new WeakMap<LLMProvider, LLMProvider>();
+/** Associate a mode-routing wrapper with its native transport for explicit probes. */
+export function registerNativeProvider(wrapper: LLMProvider, native: LLMProvider): void {
+  nativeProviders.set(wrapper, native);
+}
+/** Used by explicit probes to test native support even when the active mode is prompted. */
+export function unwrapPromptedTools(provider: LLMProvider): LLMProvider {
+  while (nativeProviders.has(provider)) provider = nativeProviders.get(provider)!;
+  return provider;
+}
 export function withPromptedTools(
   provider: LLMProvider,
   settings: { repair?: boolean; secrets?: readonly string[] } = {},
 ): LLMProvider {
-  return {
+  const wrapped: LLMProvider = {
     id: provider.id,
-    capabilities: { ...provider.capabilities, toolCalling: true },
+    capabilities: { ...provider.capabilities, toolCalling: true, thinking: false },
     listModels: (signal) => provider.listModels(signal),
     async *chat(messages, tools, options = {}): AsyncIterable<StreamEvent> {
       if (!tools.length) {
-        yield* provider.chat(messages, [], options);
+        for await (const event of provider.chat(historyFor(messages), [], options)) {
+          if (event.type === 'tool_call') throw protocolError();
+          if (event.type !== 'thinking_delta') yield event;
+        }
         return;
       }
       const validators = compile(tools);
@@ -208,4 +225,6 @@ export function withPromptedTools(
       }
     },
   };
+  nativeProviders.set(wrapped, provider);
+  return wrapped;
 }

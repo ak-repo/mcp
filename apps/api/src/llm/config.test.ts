@@ -60,11 +60,20 @@ describe('LLM configuration', () => {
         LLM_API_KEY: 'secret',
         config: { LLM_API_KEY: 'secret' },
         apiKey: 'secret',
-        headers: { authorization: 'Bearer secret' },
+        api_key: 'secret',
+        headers: { authorization: 'Bearer secret', 'x-api-key': 'secret' },
       },
       'Provider configured',
     );
     expect(output).not.toContain('secret');
     expect(output).toContain('[REDACTED]');
   });
+});
+
+it.each([
+  ['ollama', 'https://ollama.com'],
+  ['openai-compatible', 'https://api.openai.com/v1'],
+  ['anthropic', 'https://api.anthropic.com'],
+])('defaults base URL for %s', (provider, url) => {
+  expect(ConfigSchema.parse({ ...base, LLM_PROVIDER: provider }).LLM_BASE_URL).toBe(url);
 });
