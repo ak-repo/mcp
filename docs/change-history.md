@@ -1121,3 +1121,12 @@ Copy this structure, replace the example values with facts, and allocate the nex
 - Paths: apps/api/src/llm/{adapters,types.ts,index.ts}; no database or MCP changes.
 - Verification: API typecheck and focused ESLint passed; pnpm build passed. Initial focused invocation from repository root discovered zero tests (wrong working directory); corrected to apps/api. Sandbox loopback bind failed EPERM; reran with approved local-server permissions. Existing CLI test initially failed against stale dist; rebuilt before rerunning.
 - Commit: pending first requested commit. Later outcomes appended below.
+
+### H019 Part B — prompted tools
+
+- Part A committed as e59a078; adapter suite passed 52/52 after rebuilding.
+- Implemented prompted wrapper, balanced JSON extraction, strict local-only draft-07/2020-12 Ajv validation, textual tool history, bounded buffering, usage aggregation, and one repair. Invalid second output becomes raw text; transport failures propagate.
+- Added exact direct dependency ajv 8.20.0 (npm publication confirmed 2026-04-24, older than 14 days). Existing workspace version reused offline; no new HTTP client dependencies.
+- Verification: API typecheck passed; prompted-tools tests 14/14 passed. Focused ESLint initially reported an unnecessary escape in a fixture; corrected it and reran successfully. No live provider traffic.
+- Paths: apps/api/src/llm/{prompted-tools.ts,prompted-tools.test.ts,index.ts}, apps/api/package.json, pnpm-lock.yaml.
+- Commit: pending second requested commit.

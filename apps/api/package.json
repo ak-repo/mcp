@@ -21,12 +21,13 @@
     "start:api": "node dist/index.js"
   },
   "dependencies": {
+    "@fastify/cors": "11.3.1",
+    "@fastify/helmet": "13.2.0",
+    "@fastify/rate-limit": "11.2.1",
     "@foodops/core": "workspace:*",
     "@foodops/shared": "workspace:*",
+    "ajv": "8.20.0",
     "fastify": "5.12.7",
-    "@fastify/cors": "11.3.1",
-    "@fastify/rate-limit": "11.2.1",
-    "@fastify/helmet": "13.2.0",
     "fastify-plugin": "6.0.1",
     "pino": "10.4.0",
     "zod": "4.6.7"
