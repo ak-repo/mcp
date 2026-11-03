@@ -1171,3 +1171,11 @@ Exact planning answers: “Hard two-call cap (Recommended)”; “Disable outbou
 - Approved decisions: “Host summary (Recommended)”; “Retry once (Recommended)”; “One run per session (Recommended)”. Host strips action as well as confirmation_token/idempotency_key based on actual MCP schemas; preview envelope is structuredContent.data. Secrets remain server-side. Lazy connection replaces older startup-connect language.
 - Part A: shared strict event union and inferred types; browser-safe JSON validation. Verification pending.
 - Part A verified: shared typecheck/build passed; shared tests 41/41 (10 new event cases). SDK publication check found workspace 1.32.2 published 2026-10-23 (11 days old), so the dependency age exception is pending user clarification; unrelated agent implementation continues.
+
+### H020 Part B
+
+- User explicitly allowed the existing SDK exception: “Allow existing SDK exception (recommended)”. Exact SDK 1.32.2 reused offline; npm publication verified as 2026-10-23. No other dependency exception.
+- Implemented lazy authenticated stateless Streamable HTTP client, bounded handshakes/reconnect, abortable requests, safe status/errors, per-call deadlines, paginated defensive catalog cache/manual refresh, and explicit retry opt-in. Runtime owns and closes the client without connecting at boot. Added MCP and upcoming agent-limit config/default documentation.
+- Paths: apps/api/src/mcp/{client.ts,client.test.ts}, apps/api/src/{config.ts,runtime.ts,tests/config.test.ts}, apps/api/package.json, pnpm-lock.yaml, .env.example, docs/api.md.
+- Verified local SDK client/config tests 52/52. SDK's callTool return type includes compatibility results, so the wrapper explicitly validates CallToolResultSchema. Corrected strict optional server transport options and updated exact config defaults test. Full workspace verification follows after agent integration.
+- Shared events committed d52855a. Part B commit pending.

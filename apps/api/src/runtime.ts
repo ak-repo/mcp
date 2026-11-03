@@ -1,3 +1,4 @@
+import { createMcpClient, type McpConnection } from './mcp/client.js';
 import { createSimulator, type Simulator } from './simulator/simulator.js';
 import { createChangeFeed, type ChangeFeed } from './events/change-feed.js';
 import { createTickets } from './events/tickets.js';
@@ -15,6 +16,7 @@ import pino, { type Logger, type DestinationStream } from 'pino';
 import type { Config } from './config.js';
 
 export interface Runtime {
+  mcp: McpConnection;
   services: Services;
   confirmation: ConfirmationSigner;
   simulator: Simulator;
@@ -98,6 +100,7 @@ export function openRuntime(config: Config, options: { logger?: Logger } = {}): 
       config.CHANGE_FEED_POLL_MS,
       config.CALL_LOG_RETENTION_DAYS,
     );
+    const mcp = createMcpClient(config);
     const tickets = createTickets();
     const streams = createStreams(config.SSE_MAX_STREAMS);
     const simulator = createSimulator(
@@ -117,9 +120,10 @@ export function openRuntime(config: Config, options: { logger?: Logger } = {}): 
         // Both loops are deactivated synchronously, before either in-flight task is awaited.
         const simulatorStopped = simulator.stop();
         const feedStopped = feed.stop();
+        const mcpStopped = mcp.close();
         streams.close();
         tickets.stop();
-        stopped = Promise.all([simulatorStopped, feedStopped]).then(() => undefined);
+        stopped = Promise.all([simulatorStopped, feedStopped, mcpStopped]).then(() => undefined);
       }
       return stopped;
     }
@@ -138,6 +142,7 @@ export function openRuntime(config: Config, options: { logger?: Logger } = {}): 
     }
     return {
       services,
+      mcp,
       confirmation: createConfirmationSigner(
         config.API_CONFIRM_SECRET ? { secret: config.API_CONFIRM_SECRET } : {},
       ),

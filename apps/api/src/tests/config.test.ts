@@ -19,6 +19,13 @@ describe('API configuration', () => {
   it('uses defaults and workspace-relative DB paths', () => {
     const directory = root();
     expect(loadConfig({ root: directory, env: { ADMIN_TOKEN: TOKEN } })).toEqual({
+      AGENT_MAX_ITERATIONS: 6,
+      AGENT_MAX_TOOL_CALLS: 12,
+      AGENT_RUN_TIMEOUT_MS: 300000,
+      MCP_URL: 'http://127.0.0.1:3001/mcp',
+      MCP_AUTH_TOKEN: undefined,
+      MCP_CALL_TIMEOUT_MS: 10000,
+      MCP_TOOLS_TTL_MS: 60000,
       DB_PATH: join(directory, 'data/foodops.sqlite'),
       ADMIN_TOKEN: TOKEN,
       API_HOST: '127.0.0.1',

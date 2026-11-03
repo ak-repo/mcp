@@ -241,3 +241,20 @@ No chat/settings routes or agent loop exist yet. Provider settings updates are i
 | `LLM_MAX_RETRIES`           | `2`                | 0–10; retry only before the first normalized event. Probes override to zero.                                                                    |
 | `LLM_THINK`                 | `off`              | Ollama only outbound. Anthropic/OpenAI-compatible reject on; thinking never enters outbound history.                                            |
 | `LLM_CONTEXT_BUDGET_TOKENS` | `12000`            | Reserved for future history trimming.                                                                                                           |
+
+### MCP client configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `MCP_URL` | `http://127.0.0.1:3001/mcp` | Lazy Streamable HTTP connection; HTTP(S), no credentials/query/fragment or metadata targets. |
+| `MCP_AUTH_TOKEN` | unset | Required at connection time, 32+ non-whitespace characters; server-side only. |
+| `MCP_CALL_TIMEOUT_MS` | `10000` | Per-request timeout and maximum total timeout. |
+| `MCP_TOOLS_TTL_MS` | `60000` | Tool catalog freshness; manual refresh and reconnect invalidate it. |
+
+### Agent configuration (no HTTP routes yet)
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `AGENT_MAX_ITERATIONS` | `6` | 1–100 model iterations per run. |
+| `AGENT_MAX_TOOL_CALLS` | `12` | 1–100 model-requested calls; preview and execute are phases of one call. |
+| `AGENT_RUN_TIMEOUT_MS` | `300000` | Whole-run deadline, including approval waits. |

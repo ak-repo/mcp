@@ -81,6 +81,16 @@ const llmBaseUrl = z.string().refine((value) => {
   }
 });
 export const ConfigFieldsSchema = z.object({
+  AGENT_MAX_ITERATIONS: positiveInteger.pipe(z.number().max(100)).default(6),
+  AGENT_MAX_TOOL_CALLS: positiveInteger.pipe(z.number().max(100)).default(12),
+  AGENT_RUN_TIMEOUT_MS: positiveInteger.pipe(z.number().max(2147483647)).default(300000),
+  MCP_URL: llmBaseUrl.default('http://127.0.0.1:3001/mcp'),
+  MCP_AUTH_TOKEN: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().min(32).regex(/^\S+$/).optional(),
+  ),
+  MCP_CALL_TIMEOUT_MS: positiveInteger.pipe(z.number().max(2147483647)).default(10000),
+  MCP_TOOLS_TTL_MS: positiveInteger.pipe(z.number().max(2147483647)).default(60000),
   LLM_PROVIDER: z.enum(['ollama', 'openai-compatible', 'anthropic']).default('ollama'),
   LLM_BASE_URL: llmBaseUrl.optional(),
   LLM_MODEL: optionalText,
