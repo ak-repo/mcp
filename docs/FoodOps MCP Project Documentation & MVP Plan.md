@@ -299,7 +299,7 @@ Normalized messages use `system`, `user`, `assistant` and `tool` roles. Assistan
 
 ### 9.2 Adapters and registry
 
-All adapters use Node 22 global fetch. Creation performs no network I/O. No chat/settings routes, agent loop, or context trimming are implemented yet.
+All adapters use Node 22 global fetch. Creation performs no network I/O. No chat/settings routes are implemented yet; the server-side agent loop and history trimming are described in section 10.
 
 | Adapter           | Chat                        | Models                    | Native tools                                             | Thinking                                  |
 | ----------------- | --------------------------- | ------------------------- | -------------------------------------------------------- | ----------------------------------------- |
@@ -331,7 +331,7 @@ Process environment overrides workspace-root `.env`. Explicit URLs are preserved
 | `LLM_MAX_CONCURRENCY`       | `1`                | Positive concurrent operations; queue capped at 100. Manager shares slots across configuration replacements.                                                               |
 | `LLM_MAX_RETRIES`           | `2`                | 0–10 retries, only before the first normalized event. Probes set zero.                                                                                                     |
 | `LLM_THINK`                 | `off`              | Native Ollama off/on. Other adapters reject on. Thinking is never sent back.                                                                                               |
-| `LLM_CONTEXT_BUDGET_TOKENS` | `12000`            | Positive budget reserved for later history trimming.                                                                                                                       |
+| `LLM_CONTEXT_BUDGET_TOKENS` | `12000`            | Approximate agent history and tool-schema budget (characters/4).                                                                                                                       |
 
 Retries use exponential full jitter (500 ms base, 30 s cap), honor Retry-After seconds/dates, and are abortable. Only retryable failures before any event are retried; partial streams are never replayed. A slot is held through transport retries. Error kinds remain auth, rate_limit, timeout, model_not_found, context_overflow, bad_request, provider_error, network, aborted. Messages never echo provider bodies or raw network errors. Anthropic's default output cap is 1024 when maxTokens is omitted; OpenAI-compatible uses max_tokens only when supplied. URL validation is not DNS-rebinding protection; redirects are disabled.
 
@@ -355,15 +355,52 @@ Official protocol references: [OpenAI Chat Completions streaming](https://develo
 
 ## 10. Agent Loop (apps/api)
 
-1. On startup, connect an MCP client to `apps/mcp-server` over Streamable HTTP; fetch `tools/list`; cache and refresh on reconnect.
-2. `POST /api/chat` creates a run with the conversation window (last N turns, token-trimmed) and a system prompt defining role, currency, date, and rules (never guess IDs, prefer read tools first, state before/after for writes).
-3. Call the provider with the tools. Stream `text_delta` to the browser over SSE.
-4. On `tool_call`: if the tool is a write tool, emit `agent.approval_required` and pause until the user approves or rejects. Otherwise execute immediately via `client.callTool`.
-5. Append the tool result (truncated to a size limit) as a `tool` message and loop. Hard cap of 6 iterations per run; on cap, return a partial answer explaining what is left.
-6. Every call emits `mcp.call` (tool, args, status, latency) for the activity panel and writes to `tool_call_log`.
-7. Rejected writes are returned to the model as a tool result stating the user declined.
+Implemented as server-side modules; no chat, session, or approval HTTP routes exist yet. `runtime.agent` owns an in-memory ProviderManager, session store, approvals registry and active-run lifecycle. `runtime.mcp` connects lazily, not at API boot. Runtime shutdown cancels/drains runs before closing the MCP client and DB resources. Readiness remains a database check; MCP status is a separate internal diagnostic.
 
-The host enforces human approval (step 4), then submits the server-issued confirmation token (section 7.2). The server validates preview integrity and freshness; possession of that token alone does not prove human approval.
+`runAgent(deps, { session_id?, message }, signal)` yields the browser-safe shared AgentEvent union. It emits run.started, streams text.delta/thinking.delta, collects tool calls, executes sequentially, appends JSON results, and repeats until final output or a limit. Thinking is never stored in history. Provider failures emit safe run.error; iteration/call/deadline limits produce model-free unfinished-work text and run.completed. Aborts stop execution and clean pending approval state; cancelling an in-flight write does not imply rollback.
+
+### MCP connection and tool catalog
+
+MCP_URL defaults to http://127.0.0.1:3001/mcp. MCP_AUTH_TOKEN is optional at boot but required to connect (32+ non-whitespace characters). MCP_CALL_TIMEOUT_MS=10000 sets both request and total deadlines. MCP_TOOLS_TTL_MS=60000 controls the defensive paginated catalog cache; manual refresh and reconnect invalidate it. Connections coalesce, retry at most three handshakes with jittered backoff capped at two seconds, and never follow redirects. Read/discovery recovery retries once. SDK 1.32.2 matches the server; its 2026-10-23 publication is an explicitly approved exception to the dependency age rule.
+
+Tool annotations determine kind: only readOnlyHint:true is read. Tools without that flag are write. Unknown names are rejected locally. The host clones/sanitizes discovered schemas and removes action, confirmation_token and idempotency_key from write properties/required and model-supplied arguments. Original discovery metadata stays private. Tool output is untrusted data; all model-facing results are JSON text, control characters are removed, host controls/secrets are excluded, and large results use a valid JSON truncation envelope within 12 KiB.
+
+### Approval flow
+
+The host always sends action:preview without a token/key. It requires the actual structuredContent envelope `{data:{requires_user_approval:true,preview,confirmation_token,expires_at},truncated:false}`. Errors pass back to the model. Malformed, expired, truncated, or unexpected execution responses fail closed.
+
+For a valid preview, the host stores controls privately, emits a deterministic text.delta preview summary and approval.required, then pauses without another model call. The registry is the only resolver, keyed by run_id and call_id; one approval may be pending per run. Expiry is the server token's absolute expires_at, never extended. Approvals emit approval.resolved before execution. Execute sends captured business arguments plus action:execute, server-issued confirmation_token and a generated idempotency_key. A transient lost response is recovered once with identical controls; exhausted recovery reports an unknown outcome and instructs inspection. A new write always needs a new preview and approval.
+
+```text
+previewing -> error -> tool result
+     |
+     +-> awaiting approval
+            +-> approved -> executing -> result
+            +-> rejected -> rejected_by_user -> model
+            +-> expired -> expired -> model
+            +-> cancelled -> cancelled -> model (abort ends the run)
+```
+
+Tokens and idempotency keys never enter events, model messages, session history or logs. The signature proves preview integrity, not human approval. Model-supplied controls are stripped with a value-free warning. Prompt injection inside notes cannot bypass host approval; future approval routes must authenticate the operator before calling the internal resolver.
+
+### Limits, history and events
+
+AGENT_MAX_ITERATIONS=6 and AGENT_MAX_TOOL_CALLS=12 count model requests and requested calls; preview/execute/recovery are phases of a call. AGENT_RUN_TIMEOUT_MS=300000 includes approval waits. Bounds are positive, iterations/calls max 100, timeouts max 2147483647 ms. Sessions are in memory, max 100, idle TTL 30 minutes, max 40 messages and one active run each. Admission evicts idle/expired sessions; if all are active it fails. Restart discards sessions/approvals.
+
+Context estimation is `ceil(serialized characters / 4)`, including tool definitions. Keep the system prompt and latest user turn, replace oldest tool results with [trimmed], then remove oldest complete user-led turns. Reject mandatory context that cannot fit before calling the provider. Session persistence drops complete older turns; a single oversized turn is compacted to its latest user message and an omission-marked assistant summary, preserving the forty-message cap without orphan tool results. Interrupted tool groups receive cancelled placeholders.
+
+| Event type | Fields beyond type |
+| --- | --- |
+| run.started | run_id, session_id, provider, model |
+| text.delta / thinking.delta | text |
+| tool.call | call_id, name, arguments, kind (read/write) |
+| tool.result | call_id, name, status (ok/error), latency_ms, summary, truncated |
+| approval.required | call_id, name, preview (JSON), expires_at |
+| approval.resolved | call_id, decision (approved/rejected/expired/cancelled) |
+| run.completed | usage {promptTokens,completionTokens}, iterations |
+| run.error | kind, message, retryable |
+
+Each run stream starts with run.started and has one terminal event. Run identity is established by the enclosing stream; the approval resolver always takes both run_id and call_id. Existing change-feed SSE events and MCP outputs are unchanged.
 
 ## 11. Frontend Specification (apps/web)
 
@@ -395,7 +432,7 @@ The host enforces human approval (step 4), then submits the server-issued confir
 
 - Pino JSON logs with request ID and run ID; stdout in API, **stderr only** in the stdio MCP process (stdout is the protocol channel).
 - Per-tool latency and error counts from `tool_call_log`, shown in the Inspector page.
-- `/api/health` is liveness only. `/api/ready` checks DB read through core services; MCP connectivity checks are deferred until the API MCP client exists. Safe request IDs are echoed as `X-Request-Id`; request-scoped logs include request and run IDs. Startup/shutdown logs have service context only.
+- `/api/health` is liveness only. `/api/ready` checks DB read through core services; MCP connectivity is reported by the lazy client status; database readiness does not depend on an external MCP process. Safe request IDs are echoed as `X-Request-Id`; request-scoped logs include request and run IDs. Startup/shutdown logs have service context only.
 
 ## 14. Testing Strategy
 

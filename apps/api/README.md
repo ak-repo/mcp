@@ -2,7 +2,7 @@
 
 Production foundation for the dashboard HTTP API. This package owns Fastify lifecycle, authentication, HTTP validation, logging, and response mapping. Business rules and database queries belong in `@foodops/core`; DTOs and domain validation belong in `@foodops/shared`. Never import from `apps/mcp-server`.
 
-Domain REST routes and health probes are implemented. See the [complete REST reference](../../docs/api.md) for inputs, responses, examples, and preview/execute approval. Ticket-authenticated SSE and the optional simulator are implemented. LLM adapters and agent execution belong to later phases.
+Domain REST routes and health probes are implemented. See the [complete REST reference](../../docs/api.md) for inputs, responses, examples, and preview/execute approval. Ticket-authenticated SSE and the optional simulator are implemented. LLM adapters and the approval-gated agent loop are implemented as internal modules; chat/approval HTTP routes remain future work.
 
 ## Setup and commands
 
@@ -56,7 +56,7 @@ Process environment overrides the workspace-root `.env`; defaults apply only whe
 ## HTTP behavior
 
 - `GET /api/health`: liveness, `200 { "status": "ok" }`, without DB access.
-- `GET /api/ready`: core read-only service check, `200 { "status": "ready" }`; unavailable DB returns a safe 503 error. MCP connectivity checks are deferred until the API has an MCP client.
+- `GET /api/ready`: core read-only service check, `200 { "status": "ready" }`; unavailable DB returns a safe 503 error. MCP connection status is available separately through runtime.mcp.status(); database readiness does not depend on it.
 - All other requests require exactly one `Authorization: Bearer <ADMIN_TOKEN>` header. Duplicate fields are rejected; token digests are compared in constant time. Probe exceptions apply only to exact GET paths. Valid browser CORS preflights are unauthenticated.
 - CORS permits the exact configured origins with credentials disabled. Requests without Origin are accepted. Allowed response headers expose `X-Request-Id` and `Idempotency-Replayed`; preflights allow `Idempotency-Key`.
 - Requests are limited to 102400 body bytes. Global limits include public probes, failed auth, unknown paths, and preflights. Limiting is local to one process; distributed deployment requires a shared store in a later change.
@@ -96,7 +96,7 @@ Use `POST /api/stream/ticket` with bearer auth, then `GET /api/stream?ticket=...
 
 ## LLM core
 
-Native Node 22 fetch helpers, normalized provider types, bounded FIFO concurrency, byte deadlines, safe errors and schema profiles live in `src/llm`. No chat routes or agent loop are exposed. Missing model/key does not prevent API boot. Reuse a provider instance to share concurrency. Strict prompted-tool validation uses exact pinned Ajv and ajv-formats dependencies.
+Native Node 22 fetch helpers, normalized provider types, bounded FIFO concurrency, byte deadlines, safe errors and schema profiles live in `src/llm`. The internal agent loop is implemented; no chat routes are exposed. Missing model/key does not prevent API boot. Reuse a provider instance to share concurrency. Strict prompted-tool validation uses exact pinned Ajv and ajv-formats dependencies.
 
 | Variable                    | Default            | Meaning                                                                                                                                                                              |
 | --------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -112,7 +112,7 @@ Native Node 22 fetch helpers, normalized provider types, bounded FIFO concurrenc
 | `LLM_MAX_CONCURRENCY`       | `1`                | Positive concurrent operations per reused provider; queue capped at 100.                                                                                                             |
 | `LLM_MAX_RETRIES`           | `2`                | 0–10 retries, only before the first normalized event.                                                                                                                                |
 | `LLM_THINK`                 | `off`              | Off/on for Ollama; other adapters reject on.                                                                                                                                         |
-| `LLM_CONTEXT_BUDGET_TOKENS` | `12000`            | Positive budget reserved for the later history-trimming layer.                                                                                                                       |
+| `LLM_CONTEXT_BUDGET_TOKENS` | `12000`            | Approximate agent history and tool-schema budget (characters/4).                                                                                                                       |
 
 HTTP redirects are disabled. URL validation blocks literal link-local/metadata targets but does not prevent DNS rebinding. Retries apply only before any normalized event; callers must not retry a partially consumed stream. Errors use application-owned messages and do not echo provider bodies. Thinking is excluded from outbound history.
 
@@ -141,6 +141,16 @@ Audit history retention is controlled by CALL_LOG_RETENTION_DAYS (default 30). I
 
 `createLLM(config)` selects the adapter and tool mode; it performs no network I/O. `ProviderManager` holds active settings, supports atomic `update(patch)` and explicit `probe(signal)`, and exposes a secret-free `publicView()`. Keys are write-only; provider changes clear an unreplaced key and select a provider default URL. Existing calls retain captured settings and share concurrency with replacements. Settings are never persisted.
 
-Prompted mode sends no native tools, validates one JSON call against its original schema with strict Ajv, repairs once, then returns raw text if repair fails. It buffers output (1 MiB cap) and suppresses thinking. A probe lists models and checks a harmless n=7 call, native then prompted, with at most two generation requests, 256 output tokens each, no retries/repair and thinking off. Results cache for ten minutes and invalidate on updates. No diagnostic runs at boot. Anthropic defaults max_tokens to 1024, uses API version 2023-06-01, and disables outbound thinking to preserve the no-thinking-history policy. No HTTP settings/chat routes or agent loop are included yet.
+Prompted mode sends no native tools, validates one JSON call against its original schema with strict Ajv, repairs once, then returns raw text if repair fails. It buffers output (1 MiB cap) and suppresses thinking. A probe lists models and checks a harmless n=7 call, native then prompted, with at most two generation requests, 256 output tokens each, no retries/repair and thinking off. Results cache for ten minutes and invalidate on updates. No diagnostic runs at boot. Anthropic defaults max_tokens to 1024, uses API version 2023-06-01, and disables outbound thinking to preserve the no-thinking-history policy. No HTTP settings/chat/approval routes are included yet.
 
 See [the project specification](../../docs/FoodOps%20MCP%20Project%20Documentation%20%26%20MVP%20Plan.md#9-llm-provider-layer-ollama-first-adaptable-to-all) for the adapter matrix and probe shape. The existing opt-in live script remains Ollama-only.
+
+### Internal MCP client and agent
+
+`runtime.mcp` connects lazily to MCP_URL with MCP_AUTH_TOKEN; `runtime.agent.run({ session_id?, message }, signal)` yields shared AgentEvent values. The trusted host resolves approval with `runtime.agent.approvals.resolve(runId, callId, decision)`. No resolver is exposed to the model or unauthenticated clients. The future HTTP layer must enforce operator authentication.
+
+Write controls (action, confirmation_token, idempotency_key) are hidden/stripped from model requests. The host previews first, publishes a safe summary and approval event, pauses, then executes only after approval using private captured controls. Lost execution responses retry once with the same key; unresolved outcomes require inspection. Rejection/expiry/cancel never executes. Model-facing results are JSON capped at 12 KiB; notes are always untrusted data.
+
+Defaults: MCP_URL=http://127.0.0.1:3001/mcp; MCP_AUTH_TOKEN unset until connecting; MCP_CALL_TIMEOUT_MS=10000; MCP_TOOLS_TTL_MS=60000; AGENT_MAX_ITERATIONS=6; AGENT_MAX_TOOL_CALLS=12; AGENT_RUN_TIMEOUT_MS=300000. The MCP key requires at least 32 non-whitespace characters. All millisecond settings are positive and at most 2147483647. Iteration/call limits are 1–100. Sessions: 100 slots, 30-minute idle TTL, 40 messages, one run each. Context estimation uses serialized characters/4, including tools. Runtime shutdown cancels/drains runs and approvals before closing MCP/DB handles.
+
+See project documentation section 10 for the event table/state diagram and docs/api.md for environment defaults. This phase adds no HTTP endpoints or database migrations. The existing workspace SDK 1.32.2 is reused under the user's explicit age-rule exception.

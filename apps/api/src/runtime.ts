@@ -1,3 +1,4 @@
+import { createAgentHost, type AgentHost } from './agent/host.js';
 import { createMcpClient, type McpConnection } from './mcp/client.js';
 import { createSimulator, type Simulator } from './simulator/simulator.js';
 import { createChangeFeed, type ChangeFeed } from './events/change-feed.js';
@@ -17,6 +18,7 @@ import type { Config } from './config.js';
 
 export interface Runtime {
   mcp: McpConnection;
+  agent: AgentHost;
   services: Services;
   confirmation: ConfirmationSigner;
   simulator: Simulator;
@@ -42,6 +44,7 @@ export function createLogger(
         paths: [
           'ADMIN_TOKEN',
           'MCP_AUTH_TOKEN',
+          '*.MCP_AUTH_TOKEN',
           'MCP_CONFIRM_SECRET',
           'authorization',
           'headers.authorization',
@@ -101,6 +104,7 @@ export function openRuntime(config: Config, options: { logger?: Logger } = {}): 
       config.CALL_LOG_RETENTION_DAYS,
     );
     const mcp = createMcpClient(config);
+    const agent = createAgentHost(config, mcp, logger);
     const tickets = createTickets();
     const streams = createStreams(config.SSE_MAX_STREAMS);
     const simulator = createSimulator(
@@ -120,7 +124,7 @@ export function openRuntime(config: Config, options: { logger?: Logger } = {}): 
         // Both loops are deactivated synchronously, before either in-flight task is awaited.
         const simulatorStopped = simulator.stop();
         const feedStopped = feed.stop();
-        const mcpStopped = mcp.close();
+        const mcpStopped = agent.close().then(() => mcp.close());
         streams.close();
         tickets.stop();
         stopped = Promise.all([simulatorStopped, feedStopped, mcpStopped]).then(() => undefined);
@@ -143,6 +147,7 @@ export function openRuntime(config: Config, options: { logger?: Logger } = {}): 
     return {
       services,
       mcp,
+      agent,
       confirmation: createConfirmationSigner(
         config.API_CONFIRM_SECRET ? { secret: config.API_CONFIRM_SECRET } : {},
       ),

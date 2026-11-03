@@ -39,7 +39,7 @@ All domain successes, including writes and replays, use HTTP 200. Paths are case
 | GET | `/api/me` | Empty query; bearer auth | `{ actor: "ops", auth: "bearer" }` | Authentication plugin | 200 |
 | OPTIONS | `*`                                         | Valid Origin + Access-Control-Request-Method; optional Access-Control-Request-Headers | Empty preflight response  | CORS plugin                     | 204     |
 
-`GET /api/ready` returns 503 when its core read fails. MCP connectivity checks, the MCP tool catalog, chat and providers remain deferred. SSE and simulator endpoints are documented below.
+`GET /api/ready` returns 503 when its core read fails. The internal lazy MCP client/catalog and agent loop are implemented; chat, provider-settings and approval HTTP routes remain deferred. SSE and simulator endpoints are documented below.
 
 ### Query filters
 
@@ -224,7 +224,7 @@ Audit feed sequences are internal; mcp.call has no SSE id and is not replayed af
 
 ### LLM configuration (provider layer only)
 
-No chat/settings routes or agent loop exist yet. Provider settings updates are in memory only. See project documentation section 9 for streaming, prompted tools and explicit probes. An omitted base URL selects the provider default; an explicit URL is preserved.
+The internal agent loop is implemented; no chat/settings/approval HTTP routes exist yet. Provider settings updates are in memory only. See project documentation section 9 for streaming, prompted tools and explicit probes. An omitted base URL selects the provider default; an explicit URL is preserved.
 
 | Variable                    | Default            | Meaning                                                                                                                                         |
 | --------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -240,7 +240,7 @@ No chat/settings routes or agent loop exist yet. Provider settings updates are i
 | `LLM_MAX_CONCURRENCY`       | `1`                | Shared manager concurrency across replacements; queue cap 100.                                                                                  |
 | `LLM_MAX_RETRIES`           | `2`                | 0–10; retry only before the first normalized event. Probes override to zero.                                                                    |
 | `LLM_THINK`                 | `off`              | Ollama only outbound. Anthropic/OpenAI-compatible reject on; thinking never enters outbound history.                                            |
-| `LLM_CONTEXT_BUDGET_TOKENS` | `12000`            | Reserved for future history trimming.                                                                                                           |
+| `LLM_CONTEXT_BUDGET_TOKENS` | `12000`            | Agent history and tool-schema budget (characters/4).                                                                                                           |
 
 ### MCP client configuration
 

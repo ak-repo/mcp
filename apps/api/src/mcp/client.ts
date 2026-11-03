@@ -40,6 +40,14 @@ function safeError(error: unknown, signal?: AbortSignal): McpClientError {
     return new McpClientError('auth', 'MCP authentication failed; check MCP_AUTH_TOKEN', false);
   if (error !== null && typeof error === 'object' && 'code' in error && error.code === -32001)
     return new McpClientError('timeout', 'MCP request timed out', true);
+  if (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    typeof error.code === 'number' &&
+    error.code < 0
+  )
+    return new McpClientError('protocol', 'MCP server rejected the protocol request', false);
   return new McpClientError(
     'network',
     'MCP server is unavailable or returned an invalid response',

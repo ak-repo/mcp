@@ -13,6 +13,7 @@ afterEach(async () => {
 export async function fakeMcp() {
   let calls = 0;
   let fail = false;
+  let delayMs = 0;
   const headers: (string | undefined)[] = [];
   const server = createServer((req, res) => {
     void (async () => {
@@ -40,6 +41,7 @@ export async function fakeMcp() {
         { inputSchema: z.object({ id: z.string() }), annotations: { readOnlyHint: true } },
         async ({ id }) => {
           calls++;
+          if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
           return { content: [{ type: 'text', text: id }] };
         },
       );
@@ -67,6 +69,9 @@ export async function fakeMcp() {
     headers,
     get calls() {
       return calls;
+    },
+    set delay(value: number) {
+      delayMs = value;
     },
     set fail(value: boolean) {
       fail = value;
@@ -125,4 +130,16 @@ it('recovers after server availability changes and closes permanently', async ()
   });
   await client.close();
   await expect(client.listTools()).rejects.toMatchObject({ kind: 'aborted' });
+});
+
+it('enforces a per-call deadline without retrying unless requested', async () => {
+  const s = await fakeMcp();
+  const cfg = config(s.url);
+  cfg.MCP_CALL_TIMEOUT_MS = 50;
+  const client = createMcpClient(cfg);
+  cleanups.push(() => client.close());
+  await client.listTools();
+  s.delay = 200;
+  await expect(client.callTool('lookup', { id: 'O' })).rejects.toMatchObject({ kind: 'timeout' });
+  expect(s.calls).toBe(1);
 });
