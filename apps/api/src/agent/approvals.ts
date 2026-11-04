@@ -19,7 +19,11 @@ export function createApprovals(options: { now?: () => number } = {}) {
   let closed = false;
   const key = (runId: string, callId: string) => JSON.stringify([runId, callId]);
   return {
-    wait(value: PendingApproval, signal?: AbortSignal): Promise<ApprovalDecision> {
+    wait(
+      value: PendingApproval,
+      signal?: AbortSignal,
+      onApproved?: () => void,
+    ): Promise<ApprovalDecision> {
       if (closed || signal?.aborted) return Promise.resolve('cancelled');
       if ([...pending.values()].some((entry) => entry.value.runId === value.runId))
         throw new Error('Run already has a pending approval');
@@ -37,6 +41,7 @@ export function createApprovals(options: { now?: () => number } = {}) {
           while (decisions.size > 10000) decisions.delete(decisions.keys().next().value!);
           clearTimeout(timer);
           signal?.removeEventListener('abort', cancel);
+          if (decision === 'approved') onApproved?.();
           resolve(decision);
         };
         pending.set(id, { value: structuredClone(value), finish });

@@ -461,3 +461,256 @@ it('a missing configured model is a helpful failed probe, not a boot failure', a
   expect(response.statusCode).toBe(502);
   expect(response.body).toContain('LLM_MODEL');
 });
+
+it.each([
+  ['host', 'https://old.example/v1', { base_url: 'https://new.example/v1' }, false],
+  ['port', 'https://old.example:8443/v1', { base_url: 'https://old.example:9443/v1' }, false],
+  ['scheme', 'http://old.example/v1', { base_url: 'https://old.example/v1' }, false],
+  ['path', 'https://old.example/v1', { base_url: 'https://old.example/new-path' }, true],
+  [
+    'replacement',
+    'https://old.example/v1',
+    { base_url: 'https://new.example/v1', api_key: 'replacement-private-key' },
+    true,
+  ],
+  ['clear', 'https://old.example/v1', { clear_api_key: true }, false],
+] as const)(
+  'PUT exposes credential state for %s changes without leaking credentials',
+  async (_label, base, patch, retained) => {
+    const f = setup({ LLM_BASE_URL: base, LLM_API_KEY: 'old-private-key' });
+    const response = await f.app.inject({
+      method: 'PUT',
+      url: '/api/providers',
+      headers: AUTH,
+      payload: patch,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().api_key_set).toBe(retained);
+    const current = await f.app.inject({ method: 'GET', url: '/api/providers', headers: AUTH });
+    expect(current.json().api_key_set).toBe(retained);
+    const invalid = await f.app.inject({
+      method: 'PUT',
+      url: '/api/providers',
+      headers: AUTH,
+      payload: { api_key: 'replacement-private-key', clear_api_key: true },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(response.body + current.body + invalid.body + f.logs.join('')).not.toMatch(
+      /old-private-key|replacement-private-key/,
+    );
+    expect(
+      (await f.app.inject({ method: 'GET', url: '/api/providers', headers: AUTH })).json()
+        .api_key_set,
+    ).toBe(retained);
+  },
+);
+
+function pending<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+it.each(['disconnect', 'cancel'] as const)(
+  '%s after approval preserves the committed write in session history',
+  async (action) => {
+    const scripted = provider();
+    const chat = scripted.chat.bind(scripted);
+    const histories: unknown[] = [];
+    scripted.chat = (messages, tools, options) => {
+      histories.push(structuredClone(messages));
+      return chat(messages, tools, options);
+    };
+    const f = setup({}, { provider: scripted });
+    const url = await listen(f);
+    const gate = pending<void>();
+    const entered = pending<void>();
+    const original = f.runtime.mcp.callTool;
+    let executionSignal: AbortSignal | undefined;
+    f.runtime.mcp.callTool = async (name, args, options) => {
+      if (args.action === 'execute') {
+        executionSignal = options?.signal;
+        entered.resolve();
+        await gate.promise;
+      }
+      const result = await original(name, args, options);
+      if (args.action === 'execute')
+        result.structuredContent = {
+          data: { requires_user_approval: false, result: { status: 'committed-for-review' } },
+          truncated: false,
+        };
+      return result;
+    };
+    const controller = new AbortController();
+    const response = await fetch(`${url}/api/chat`, {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'cancel', session_id: 'shielded' }),
+      signal: controller.signal,
+    });
+    const stream = events(response);
+    let runId = '';
+    for (;;) {
+      const event = (await stream.next()).value;
+      if (event?.type === 'run.started') runId = event.run_id;
+      if (event?.type === 'approval.required') break;
+    }
+    expect(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: `/api/chat/${runId}/approve`,
+          headers: AUTH,
+          payload: { call_id: 'call-1', decision: 'approved' },
+        })
+      ).statusCode,
+    ).toBe(200);
+    await entered.promise;
+    if (action === 'disconnect') {
+      controller.abort();
+      await stream.return(undefined).catch(() => undefined);
+    } else
+      expect(
+        (await f.app.inject({ method: 'POST', url: `/api/chat/${runId}/cancel`, headers: AUTH }))
+          .statusCode,
+      ).toBe(200);
+    expect(executionSignal?.aborted).toBe(false);
+    expect(f.runtime.agent.activeCount).toBe(1);
+    gate.resolve();
+    const remaining: AgentEvent[] = [];
+    if (action === 'cancel') for await (const event of stream) remaining.push(event);
+    if (action === 'cancel')
+      expect(remaining.some((event) => event.type === 'tool.result' && event.status === 'ok')).toBe(
+        true,
+      );
+    await vi.waitFor(() => expect(f.runtime.agent.activeCount).toBe(0));
+    expect(f.runtime.agent.approvals.size).toBe(0);
+    const next = await fetch(`${url}/api/chat`, {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'read', session_id: 'shielded' }),
+    });
+    for await (const event of events(next)) AgentEventSchema.parse(event);
+    expect(JSON.stringify(histories)).toContain('committed-for-review');
+    expect(f.calls.filter((args) => args.action === 'execute')).toHaveLength(1);
+    expect(
+      f.logs
+        .map((line) => JSON.parse(line) as { level: number })
+        .filter((entry) => entry.level === 50),
+    ).toEqual([]);
+  },
+);
+it('logs one safe contextual error for a failed event loop and a generic client event', async () => {
+  const f = setup({ LLM_API_KEY: 'secret-key' });
+  const start = f.runtime.agent.start;
+  f.runtime.agent.start = (...args) => {
+    const run = start(...args);
+    return {
+      ...run,
+      events: (async function* () {
+        yield {
+          type: 'run.started' as const,
+          run_id: run.runId,
+          session_id: run.sessionId,
+          provider: 'scripted',
+          model: 'test',
+        };
+        throw new Error(
+          'secret-key Authorization: Bearer header-secret confirmation_token=token-secret prompt and tool payload',
+        );
+      })(),
+    };
+  };
+  const url = await listen(f);
+  const response = await chat(url, 'read');
+  const transcript: AgentEvent[] = [];
+  for await (const event of events(response)) transcript.push(event);
+  const errors = f.logs
+    .map(
+      (line) =>
+        JSON.parse(line) as { level: number; run_id?: string; session_id?: string; err?: unknown },
+    )
+    .filter((entry) => entry.level === 50);
+  expect(errors).toHaveLength(1);
+  expect(errors[0]).toMatchObject({
+    run_id: expect.any(String),
+    session_id: expect.any(String),
+    err: expect.any(Object),
+  });
+  expect(f.logs.join('') + JSON.stringify(transcript)).not.toMatch(
+    /secret-key|header-secret|token-secret|prompt and tool payload/,
+  );
+  expect(transcript.at(-1)).toEqual({
+    type: 'run.error',
+    kind: 'internal',
+    message: 'Chat stream could not complete',
+    retryable: false,
+  });
+});
+it('warns with run context if closing a chat consumer fails', async () => {
+  const f = setup();
+  const start = f.runtime.agent.start;
+  f.runtime.agent.start = (...args) => {
+    const run = start(...args);
+    return {
+      ...run,
+      async close() {
+        await run.close();
+        throw new Error('Authorization: Bearer private-close-data');
+      },
+    };
+  };
+  const url = await listen(f);
+  for await (const event of events(await chat(url, 'read'))) AgentEventSchema.parse(event);
+  expect(
+    f.logs
+      .map((line) => JSON.parse(line) as { level: number; run_id?: string })
+      .some((entry) => entry.level === 40 && entry.run_id),
+  ).toBe(true);
+  expect(f.logs.join('')).not.toContain('private-close-data');
+});
+
+it('shutdown aborts an in-flight approved execution and drains without error logs', async () => {
+  const f = setup();
+  const url = await listen(f);
+  const entered = pending<void>();
+  const original = f.runtime.mcp.callTool;
+  let signal: AbortSignal | undefined;
+  f.runtime.mcp.callTool = async (name, args, options) => {
+    if (args.action === 'execute') {
+      signal = options?.signal;
+      entered.resolve();
+      return new Promise((_resolve, reject) => {
+        if (signal?.aborted) reject(new Error('Shutdown'));
+        else signal?.addEventListener('abort', () => reject(new Error('Shutdown')), { once: true });
+      });
+    }
+    return original(name, args, options);
+  };
+  const response = await chat(url, 'cancel');
+  const stream = events(response);
+  let runId = '';
+  for (;;) {
+    const event = (await stream.next()).value;
+    if (event?.type === 'run.started') runId = event.run_id;
+    if (event?.type === 'approval.required') break;
+  }
+  await f.app.inject({
+    method: 'POST',
+    url: `/api/chat/${runId}/approve`,
+    headers: AUTH,
+    payload: { call_id: 'call-1', decision: 'approved' },
+  });
+  await entered.promise;
+  await f.app.close();
+  for await (const event of stream) AgentEventSchema.parse(event);
+  expect(signal?.aborted).toBe(true);
+  expect(f.runtime.agent.activeCount).toBe(0);
+  expect(f.runtime.agent.approvals.size).toBe(0);
+  expect(
+    f.logs
+      .map((line) => JSON.parse(line) as { level: number })
+      .filter((entry) => entry.level === 50),
+  ).toEqual([]);
+});

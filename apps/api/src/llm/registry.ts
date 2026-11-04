@@ -146,6 +146,10 @@ export class ProviderManager {
           ? patch.api_key
           : (patch.api_key ?? this.#config.LLM_API_KEY),
     });
+    // Validate first, then compare normalized origins (including default ports).
+    const changedOrigin =
+      new URL(next.LLM_BASE_URL).origin !== new URL(this.#config.LLM_BASE_URL).origin;
+    if (changedOrigin && patch.api_key === undefined) next.LLM_API_KEY = undefined;
     const replacement = createLLM(next, this.#dependencies);
     invalidateProbe(this.#config);
     invalidateProbe(next);

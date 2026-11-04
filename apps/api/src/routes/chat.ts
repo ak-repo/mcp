@@ -32,6 +32,13 @@ const chat: FastifyPluginAsync<{ runtime: Runtime }> = async (app, { runtime }) 
       throw error;
     }
     let terminal = false;
+    let clientAborted = false;
+    const context = { run_id: run.runId, session_id: run.sessionId };
+    const warn = (error: unknown) =>
+      request.log.warn(
+        { run_id: run.runId, err: run.safeError(error) },
+        'Chat stream cleanup failed',
+      );
     let connection: ReturnType<Runtime['chatStreams']['open']> | undefined;
     try {
       reply.hijack();
@@ -49,24 +56,48 @@ const chat: FastifyPluginAsync<{ runtime: Runtime }> = async (app, { runtime }) 
       });
       reply.raw.flushHeaders();
       connection = runtime.chatStreams.open(reply.raw, () => {
-        if (!terminal) run.abort();
+        if (!terminal) {
+          clientAborted = true;
+          run.abort();
+        }
       });
       for await (const raw of run.events) {
         const event = AgentEventSchema.parse(raw);
         if (event.type === 'run.completed' || event.type === 'run.error') terminal = true;
         if (!(await connection.send(event))) break;
       }
-    } catch {
-      if (connection && !reply.raw.destroyed)
-        await connection.send({
-          type: 'run.error',
-          kind: 'internal',
-          message: 'Chat stream could not complete',
-          retryable: false,
-        });
+    } catch (error) {
+      if (!clientAborted && !request.raw.aborted && !reply.raw.destroyed && !runtime.signal.aborted)
+        request.log.error({ ...context, err: run.safeError(error) }, 'Chat event loop failed');
+      else
+        request.log.warn(
+          { run_id: run.runId, err: run.safeError(error) },
+          'Chat stream interrupted',
+        );
+      if (connection && !reply.raw.destroyed && !terminal) {
+        terminal = true;
+        try {
+          await connection.send({
+            type: 'run.error',
+            kind: 'internal',
+            message: 'Chat stream could not complete',
+            retryable: false,
+          });
+        } catch (failure) {
+          warn(failure);
+        }
+      }
     } finally {
-      await run.close();
-      connection?.close();
+      try {
+        await run.close();
+      } catch (error) {
+        warn(error);
+      }
+      try {
+        connection?.close();
+      } catch (error) {
+        warn(error);
+      }
     }
   });
   app.post('/chat/:runId/approve', { preHandler: app.writeRateLimit }, async (request) => {

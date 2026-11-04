@@ -1,3 +1,4 @@
+import { safeChatError } from './error-log.js';
 import { randomUUID } from 'node:crypto';
 import { ErrorCode, type AgentEvent } from '@foodops/shared';
 import type { Logger } from 'pino';
@@ -35,6 +36,7 @@ export function createAgentHost(
   const approvals = createApprovals();
   const sessions = createSessions();
   const runs = new Map<string, RunRecord>();
+  const shutdown = new AbortController();
   let closed = false;
   let closing: Promise<void> | undefined;
   const sweep = () => {
@@ -84,6 +86,7 @@ export function createAgentHost(
     const inner = runAgent(
       {
         config,
+        shutdownSignal: shutdown.signal,
         mcp,
         logger,
         provider: dependencies.provider ?? captured.provider,
@@ -98,11 +101,22 @@ export function createAgentHost(
     let finishing: Promise<void> | undefined;
     const finish = () => {
       if (!finishing)
-        finishing = inner.return(undefined).then(() => {
-          record.done = true;
-          record.at = Date.now();
-          sweep();
-        });
+        finishing = inner
+          .return(undefined)
+          .then(() => {
+            record.done = true;
+            record.at = Date.now();
+            sweep();
+          })
+          .catch((error) => {
+            logger.warn(
+              { run_id: id, err: safeChatError(error, captured.redact) },
+              'Agent close failed',
+            );
+            record.done = true;
+            record.at = Date.now();
+            sweep();
+          });
       return finishing;
     };
     async function* consume(): AsyncGenerator<AgentEvent> {
@@ -126,6 +140,8 @@ export function createAgentHost(
     runs.set(id, record);
     return {
       runId: id,
+      sessionId,
+      safeError: (error: unknown) => safeChatError(error, captured.redact),
       events: iterator,
       abort() {
         record.cancelled = true;
@@ -133,7 +149,14 @@ export function createAgentHost(
       },
       async close() {
         controller.abort();
-        await iterator.return(undefined);
+        try {
+          await iterator.return(undefined);
+        } catch (error) {
+          logger.warn(
+            { run_id: id, err: safeChatError(error, captured.redact) },
+            'Agent consumer close failed',
+          );
+        }
         await finish();
       },
     };
@@ -201,6 +224,7 @@ export function createAgentHost(
     close(): Promise<void> {
       if (!closing) {
         closed = true;
+        shutdown.abort();
         approvals.close();
         for (const run of runs.values())
           if (!run.done) {

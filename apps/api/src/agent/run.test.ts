@@ -419,3 +419,168 @@ it('host shutdown drains a paused generator and clears its timer', async () => {
   expect(host.approvals.size).toBe(0);
   await expect(host.run({ message: 'Read' }).next()).rejects.toThrow('closed');
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+async function atApproval(f: ReturnType<typeof fixture>, signal?: AbortSignal) {
+  const iterator = runAgent(f.deps, { session_id: 'durable-session', message: 'Cancel' }, signal);
+  let runId = '';
+  for (;;) {
+    const event = (await iterator.next()).value;
+    if (event?.type === 'run.started') runId = event.run_id;
+    if (event?.type === 'approval.required') return { iterator, runId, callId: event.call_id };
+  }
+}
+function saved(f: ReturnType<typeof fixture>) {
+  const lease = f.deps.sessions.acquire('durable-session');
+  const history = lease.history;
+  lease.release();
+  return history;
+}
+it('approved execution survives disconnect even while the generator is paused at approval.required', async () => {
+  const f = fixture([[call('cancel_order', { order_id: 'O', reason: 'ops' }), done]]);
+  const gate = deferred<void>();
+  const entered = deferred<void>();
+  const original = f.deps.mcp.callTool;
+  let executionSignal: AbortSignal | undefined;
+  f.deps.mcp.callTool = async (name, args, options) => {
+    if (args.action === 'execute') {
+      executionSignal = options?.signal;
+      entered.resolve();
+      await gate.promise;
+    }
+    return original(name, args, options);
+  };
+  const controller = new AbortController();
+  const { iterator, runId, callId } = await atApproval(f, controller.signal);
+  f.deps.approvals.resolve(runId, callId, 'approved');
+  await entered.promise;
+  controller.abort();
+  const closing = iterator.return(undefined);
+  expect(executionSignal?.aborted).toBe(false);
+  gate.resolve();
+  await closing;
+  expect(f.deps.approvals.size).toBe(0);
+  expect(
+    saved(f)
+      .filter((m) => m.role === 'tool')
+      .map((m) => m.content),
+  ).toEqual([expect.stringContaining('requires_user_approval')]);
+  expect(JSON.stringify(saved(f))).not.toContain('"status":"cancelled"');
+  expect(f.mcpCalls.filter((c) => c.args.action === 'execute')).toHaveLength(1);
+});
+it.each(['deadline', 'shutdown'] as const)(
+  '%s during execution records unknown outcome and never cancelled',
+  async (cause) => {
+    vi.useFakeTimers();
+    const f = fixture([[call('cancel_order', { order_id: 'O', reason: 'ops' }), done]], {
+      AGENT_RUN_TIMEOUT_MS: 1000,
+    });
+    const shutdown = new AbortController();
+    f.deps.shutdownSignal = shutdown.signal;
+    const entered = deferred<void>();
+    const original = f.deps.mcp.callTool;
+    f.deps.mcp.callTool = async (name, args, options) => {
+      if (args.action === 'execute') {
+        entered.resolve();
+        return new Promise(() => {});
+      }
+      return original(name, args, options);
+    };
+    const { iterator, runId, callId } = await atApproval(f);
+    f.deps.approvals.resolve(runId, callId, 'approved');
+    await entered.promise;
+    expect((await iterator.next()).value?.type).toBe('approval.resolved');
+    const next = iterator.next();
+    if (cause === 'shutdown') shutdown.abort();
+    else await vi.advanceTimersByTimeAsync(1000);
+    expect((await next).value).toMatchObject({ type: 'tool.result', status: 'error' });
+    for await (const event of iterator) AgentEventSchema.parse(event);
+    const history = saved(f);
+    const results = history.filter((m) => m.role === 'tool');
+    expect(JSON.parse(results[0]!.content)).toEqual({
+      status: 'unknown_outcome',
+      note: 'The write may have committed; inspect current state before any new write.',
+    });
+    vi.useRealTimers();
+    delete f.deps.shutdownSignal;
+    for await (const event of runAgent(f.deps, {
+      session_id: 'durable-session',
+      message: 'What happened?',
+    }))
+      AgentEventSchema.parse(event);
+    expect(JSON.stringify(f.requests.at(-1)?.messages)).toContain('unknown_outcome');
+    expect(f.requests.at(-1)?.messages[0]?.content).toContain('never retry the write blindly');
+  },
+);
+it('interrupted preview never executes and is persisted as cancelled', async () => {
+  const f = fixture([[call('cancel_order', { order_id: 'O', reason: 'ops' }), done]]);
+  const controller = new AbortController();
+  const entered = deferred<void>();
+  f.deps.mcp.callTool = async (_name, args, options) => {
+    expect(args.action).toBe('preview');
+    entered.resolve();
+    return new Promise((_resolve, reject) =>
+      options?.signal?.addEventListener('abort', () => reject(new Error('Cancelled')), {
+        once: true,
+      }),
+    );
+  };
+  const iterator = runAgent(
+    f.deps,
+    { session_id: 'durable-session', message: 'Cancel' },
+    controller.signal,
+  );
+  await iterator.next();
+  await iterator.next();
+  const next = iterator.next();
+  await entered.promise;
+  controller.abort();
+  await next;
+  for await (const event of iterator) AgentEventSchema.parse(event);
+  expect(
+    saved(f)
+      .filter((m) => m.role === 'tool')
+      .map((m) => JSON.parse(m.content)),
+  ).toEqual([{ status: 'cancelled' }]);
+  expect(f.deps.approvals.size).toBe(0);
+});
+it('unknown outcome remains visible when history is compacted', () => {
+  const unknown = {
+    role: 'tool' as const,
+    toolCallId: 'c',
+    toolName: 'cancel_order',
+    content: JSON.stringify({
+      status: 'unknown_outcome',
+      note: 'The write may have committed; inspect current state before any new write.',
+    }),
+  };
+  const history: NormalizedMessage[] = [
+    { role: 'user', content: 'cancel' },
+    {
+      role: 'assistant',
+      content: '',
+      toolCalls: [{ id: 'c', name: 'cancel_order', arguments: { order_id: 'O' } }],
+    },
+    unknown,
+    { role: 'user', content: 'new' },
+    ...Array.from({ length: 42 }, () => ({ role: 'assistant' as const, content: 'text' })),
+  ];
+  const bounded = boundHistory(history);
+  expect(bounded.length).toBeLessThanOrEqual(40);
+  expect(JSON.stringify(bounded)).toContain('unknown_outcome');
+  expect(JSON.stringify(trimHistory('system', bounded, 'latest', [], 400))).toContain(
+    'unknown_outcome',
+  );
+});
+it('approval emits a single structured preview without a synthetic text delta', async () => {
+  const f = fixture([[call('cancel_order', { order_id: 'O', reason: 'ops' }), done], [done]]);
+  const events = await collect(f.deps, 'rejected');
+  expect(events.filter((e) => e.type === 'text.delta')).toEqual([]);
+  expect(events.filter((e) => e.type === 'approval.required')).toHaveLength(1);
+});

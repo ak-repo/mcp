@@ -28,6 +28,7 @@ export interface AgentDependencies {
   approvals: Approvals;
   sessions: Sessions;
   logger: Logger;
+  shutdownSignal?: AbortSignal;
   now?: () => number;
   redactText?: (text: string) => string;
 }
@@ -45,6 +46,20 @@ class AgentFailure extends Error {
     super(message);
   }
 }
+function abortableExecution<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const cancel = () => reject(new Error('Execution interrupted'));
+    if (signal.aborted) {
+      cancel();
+      return;
+    }
+    signal.addEventListener('abort', cancel, { once: true });
+    void Promise.resolve()
+      .then(work)
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener('abort', cancel));
+  });
+}
 export async function* runAgent(
   deps: AgentDependencies,
   input: AgentInput,
@@ -55,7 +70,10 @@ export async function* runAgent(
   const now = deps.now ?? Date.now;
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), deps.config.AGENT_RUN_TIMEOUT_MS);
-  const combined = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+  const executionSignal = deps.shutdownSignal
+    ? AbortSignal.any([deadline.signal, deps.shutdownSignal])
+    : deadline.signal;
+  const combined = signal ? AbortSignal.any([signal, executionSignal]) : executionSignal;
   let session: ReturnType<Sessions['acquire']> | undefined;
   let messages: NormalizedMessage[] = [];
   let iterations = 0;
@@ -64,6 +82,23 @@ export async function* runAgent(
   const secrets = [deps.config.LLM_API_KEY, deps.config.MCP_AUTH_TOKEN].filter((s): s is string =>
     Boolean(s),
   );
+  type Result = ReturnType<typeof modelResult>;
+  const recorded = new Set<ToolCall>();
+  const executions = new Map<ToolCall, Promise<Result>>();
+  const append = (call: ToolCall, result: Result) => {
+    if (recorded.has(call)) return;
+    recorded.add(call);
+    messages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, content: result.text });
+  };
+  const unknown = (): Result => ({
+    text: JSON.stringify({
+      status: 'unknown_outcome',
+      note: 'The write may have committed; inspect current state before any new write.',
+    }),
+    summary: 'Write outcome is unknown; inspect current state before any new write.',
+    status: 'error',
+    truncated: false,
+  });
   const safe = (value: unknown) => cleanData(value, secrets, deps.redactText);
   const check = () => {
     if (combined.aborted)
@@ -210,6 +245,46 @@ export async function* runAgent(
             const idempotencyKey = randomUUID();
             secrets.push(idempotencyKey);
             const publicPreview = z.json().parse(safe(preview.preview));
+            const launch = () => {
+              // The registry invokes this synchronously at approval resolution, even if the SSE consumer has detached.
+              const work = (async (): Promise<Result> => {
+                let outcome: Result;
+                try {
+                  const executed = await abortableExecution(
+                    () =>
+                      deps.mcp.callTool(
+                        call.name,
+                        {
+                          ...call.arguments,
+                          action: 'execute',
+                          confirmation_token: preview.confirmation_token,
+                          idempotency_key: idempotencyKey,
+                        },
+                        { signal: executionSignal, retry: true },
+                      ),
+                    executionSignal,
+                  );
+                  if (!executed.isError && executed.structuredContent?.truncated !== true) {
+                    const completed = z
+                      .object({
+                        data: z.object({
+                          requires_user_approval: z.literal(false),
+                          result: z.json(),
+                        }),
+                        truncated: z.literal(false),
+                      })
+                      .safeParse(executed.structuredContent);
+                    if (!completed.success) throw new Error('Uncertain write response');
+                  }
+                  outcome = modelResult(executed, secrets, deps.redactText);
+                } catch {
+                  outcome = unknown();
+                }
+                append(call, outcome);
+                return outcome;
+              })();
+              executions.set(call, work);
+            };
             const decisionPromise = deps.approvals.wait(
               {
                 runId,
@@ -222,11 +297,8 @@ export async function* runAgent(
                 idempotencyKey,
               },
               combined,
+              launch,
             );
-            yield {
-              type: 'text.delta',
-              text: `Proposed ${call.name}: ${JSON.stringify(publicPreview)}. Explicit approval is required.`,
-            };
             yield {
               type: 'approval.required',
               call_id: call.id,
@@ -236,8 +308,8 @@ export async function* runAgent(
             };
             const decision = await decisionPromise;
             yield { type: 'approval.resolved', call_id: call.id, decision };
-            check();
-            if (decision !== 'approved')
+            if (decision !== 'approved') {
+              check();
               result = {
                 text: JSON.stringify({
                   status: decision === 'rejected' ? 'rejected_by_user' : decision,
@@ -246,55 +318,14 @@ export async function* runAgent(
                 status: 'ok',
                 truncated: false,
               };
-            else {
-              try {
-                const executed = await deps.mcp.callTool(
-                  call.name,
-                  {
-                    ...call.arguments,
-                    action: 'execute',
-                    confirmation_token: preview.confirmation_token,
-                    idempotency_key: idempotencyKey,
-                  },
-                  { signal: combined, retry: true },
-                );
-                if (!executed.isError && executed.structuredContent?.truncated !== true) {
-                  const completed = z
-                    .object({
-                      data: z.object({
-                        requires_user_approval: z.literal(false),
-                        result: z.json(),
-                      }),
-                      truncated: z.literal(false),
-                    })
-                    .safeParse(executed.structuredContent);
-                  if (!completed.success)
-                    throw new AgentFailure(
-                      'unknown_outcome',
-                      'MCP execution returned an invalid outcome; inspect the order before retrying.',
-                    );
-                }
-                result = modelResult(executed, secrets, deps.redactText);
-              } catch (error) {
-                if (combined.aborted) check();
-                if (error instanceof McpClientError && error.retryable)
-                  throw new AgentFailure(
-                    'unknown_outcome',
-                    'Approved write response was lost after recovery; it may have committed. Inspect the order before starting a new write.',
-                  );
-                throw error;
-              }
+            } else {
+              result = await executions.get(call)!;
             }
           } else {
             result = modelResult(raw, secrets, deps.redactText);
           }
         }
-        messages.push({
-          role: 'tool',
-          toolCallId: call.id,
-          toolName: call.name,
-          content: result.text,
-        });
+        append(call, result);
         yield {
           type: 'tool.result',
           call_id: call.id,
@@ -304,6 +335,12 @@ export async function* runAgent(
           summary: result.summary,
           truncated: result.truncated,
         };
+        if (executions.has(call) && result.text.includes('"status":"unknown_outcome"'))
+          throw new AgentFailure(
+            'unknown_outcome',
+            'The write may have committed; inspect current state before any new write.',
+          );
+        check();
       }
       if (limited || toolCount >= deps.config.AGENT_MAX_TOOL_CALLS) {
         limited = true;
@@ -339,23 +376,34 @@ export async function* runAgent(
       };
     }
   } finally {
+    deps.approvals.cancelRun(runId);
+    await Promise.all(executions.values());
     clearTimeout(timer);
     deadline.abort();
-    deps.approvals.cancelRun(runId);
-    // Complete interrupted tool-call groups before persisting to native provider history.
-    const completed = new Set(
-      messages.filter((message) => message.role === 'tool').map((message) => message.toolCallId),
-    );
-    for (const message of [...messages])
-      if (message.role === 'assistant')
-        for (const call of message.toolCalls ?? [])
-          if (!completed.has(call.id))
-            messages.push({
-              role: 'tool',
-              toolCallId: call.id,
-              toolName: call.name,
-              content: '{"status":"cancelled"}',
-            });
+    // Reconcile each assistant group independently: providers can reuse call IDs across turns.
+    const reconciled: NormalizedMessage[] = [];
+    let pending: ToolCall[] = [];
+    const flush = () => {
+      for (const call of pending)
+        reconciled.push({
+          role: 'tool',
+          toolCallId: call.id,
+          toolName: call.name,
+          content: executions.has(call) ? unknown().text : '{"status":"cancelled"}',
+        });
+      pending = [];
+    };
+    for (const message of messages) {
+      if (message.role !== 'tool') flush();
+      reconciled.push(message);
+      if (message.role === 'assistant') pending = [...(message.toolCalls ?? [])];
+      if (message.role === 'tool') {
+        const index = pending.findIndex((call) => call.id === message.toolCallId);
+        if (index >= 0) pending.splice(index, 1);
+      }
+    }
+    flush();
+    messages = reconciled;
     session?.release(
       messages.length ? messages.filter((message) => message.role !== 'system') : undefined,
     );

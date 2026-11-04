@@ -34,133 +34,148 @@ function scripted(orderId: string): LLMProvider {
     },
   };
 }
-it('uses SDK preview/token semantics and retries a lost execution response with the same key', async () => {
-  const calls: Record<string, unknown>[] = [];
-  let committed = 0;
-  const responses = new Map<string, object>();
-  const server = createServer((req, res) => {
-    void (async () => {
-      if (req.method !== 'POST') {
-        res.writeHead(405);
-        res.end();
-        return;
-      }
-      let text = '';
-      for await (const chunk of req) text += String(chunk);
-      const message = JSON.parse(text) as {
-        method: string;
-        params?: { arguments?: Record<string, unknown> };
-      };
-      const mcp = new McpServer({ name: 'fake', version: '1' });
-      mcp.registerTool(
-        'cancel_order',
-        {
-          inputSchema: z.object({
-            order_id: z.string(),
-            reason: z.string(),
-            action: z.enum(['preview', 'execute']).optional(),
-            confirmation_token: z.string().optional(),
-            idempotency_key: z.string().optional(),
-          }),
-          annotations: { readOnlyHint: false },
-        },
-        async (args) => {
-          calls.push(args);
-          if (args.action === 'preview')
-            return {
-              content: [{ type: 'text', text: 'Preview' }],
-              structuredContent: {
-                data: {
-                  requires_user_approval: true,
-                  preview: { order_id: args.order_id },
-                  confirmation_token: 'server-secret-token',
-                  expires_at: new Date(Date.now() + 300000).toISOString(),
+it.each(['lost response', 'client disconnect'] as const)(
+  'SDK preview/token write survives %s',
+  async (mode) => {
+    const controller = new AbortController();
+    const calls: Record<string, unknown>[] = [];
+    let committed = 0;
+    const responses = new Map<string, object>();
+    const server = createServer((req, res) => {
+      void (async () => {
+        if (req.method !== 'POST') {
+          res.writeHead(405);
+          res.end();
+          return;
+        }
+        let text = '';
+        for await (const chunk of req) text += String(chunk);
+        const message = JSON.parse(text) as {
+          method: string;
+          params?: { arguments?: Record<string, unknown> };
+        };
+        const mcp = new McpServer({ name: 'fake', version: '1' });
+        mcp.registerTool(
+          'cancel_order',
+          {
+            inputSchema: z.object({
+              order_id: z.string(),
+              reason: z.string(),
+              action: z.enum(['preview', 'execute']).optional(),
+              confirmation_token: z.string().optional(),
+              idempotency_key: z.string().optional(),
+            }),
+            annotations: { readOnlyHint: false },
+          },
+          async (args) => {
+            calls.push(args);
+            if (args.action === 'preview')
+              return {
+                content: [{ type: 'text', text: 'Preview' }],
+                structuredContent: {
+                  data: {
+                    requires_user_approval: true,
+                    preview: { order_id: args.order_id },
+                    confirmation_token: 'server-secret-token',
+                    expires_at: new Date(Date.now() + 300000).toISOString(),
+                  },
+                  truncated: false,
                 },
-                truncated: false,
-              },
-            };
-          expect(args.confirmation_token).toBe('server-secret-token');
-          expect(args.idempotency_key).toBeTruthy();
-          const key = args.idempotency_key!;
-          if (!responses.has(key)) {
-            committed++;
-            responses.set(key, {
-              content: [{ type: 'text', text: 'done' }],
-              structuredContent: {
-                data: { requires_user_approval: false, result: { order_id: args.order_id } },
-                truncated: false,
-              },
-            });
-          }
-          return responses.get(key) as { content: { type: 'text'; text: string }[] };
-        },
-      );
-      const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
-      await mcp.connect(transport);
-      res.on('close', () => {
-        void mcp.close();
+              };
+            expect(args.confirmation_token).toBe('server-secret-token');
+            expect(args.idempotency_key).toBeTruthy();
+            const key = args.idempotency_key!;
+            if (!responses.has(key)) {
+              committed++;
+              responses.set(key, {
+                content: [{ type: 'text', text: 'done' }],
+                structuredContent: {
+                  data: { requires_user_approval: false, result: { order_id: args.order_id } },
+                  truncated: false,
+                },
+              });
+            }
+            if (mode === 'client disconnect') controller.abort();
+            return responses.get(key) as { content: { type: 'text'; text: string }[] };
+          },
+        );
+        const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
+        await mcp.connect(transport);
+        res.on('close', () => {
+          void mcp.close();
+        });
+        await transport.handleRequest(req, res, message);
+      })().catch(() => {
+        if (!res.headersSent) res.writeHead(500);
+        res.end();
       });
-      await transport.handleRequest(req, res, message);
-    })().catch(() => {
-      if (!res.headersSent) res.writeHead(500);
-      res.end();
     });
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const f = fixture();
-  const config = {
-    ...f.config,
-    MCP_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`,
-    MCP_AUTH_TOKEN: 't'.repeat(32),
-  };
-  // Simulate loss after commit at the fetch boundary without bypassing SDK dispatch.
-  let dropped = false;
-  const client = createMcpClient(config, {
-    fetch: async (input, init) => {
-      const response = await fetch(input, init);
-      const body =
-        typeof init?.body === 'string'
-          ? (JSON.parse(init.body) as { params?: { arguments?: { action?: string } } })
-          : undefined;
-      if (!dropped && body?.params?.arguments?.action === 'execute') {
-        dropped = true;
-        await response.text();
-        throw new TypeError('Lost connection');
-      }
-      return response;
-    },
-  });
-  const approvals = createApprovals();
-  let runId = '';
-  try {
-    for await (const event of runAgent(
-      {
-        config,
-        provider: scripted('O'),
-        model: 'test',
-        mcp: client,
-        approvals,
-        sessions: createSessions(),
-        logger: f.runtime.logger,
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const f = fixture();
+    const config = {
+      ...f.config,
+      MCP_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`,
+      MCP_AUTH_TOKEN: 't'.repeat(32),
+    };
+    // Simulate loss after commit at the fetch boundary without bypassing SDK dispatch.
+    let dropped = false;
+    const client = createMcpClient(config, {
+      fetch: async (input, init) => {
+        const response = await fetch(input, init);
+        const body =
+          typeof init?.body === 'string'
+            ? (JSON.parse(init.body) as { params?: { arguments?: { action?: string } } })
+            : undefined;
+        if (mode === 'lost response' && !dropped && body?.params?.arguments?.action === 'execute') {
+          dropped = true;
+          await response.text();
+          throw new TypeError('Lost connection');
+        }
+        return response;
       },
-      { message: 'Cancel' },
-    )) {
-      AgentEventSchema.parse(event);
-      expect(JSON.stringify(event)).not.toContain('server-secret-token');
-      if (event.type === 'run.started') runId = event.run_id;
-      if (event.type === 'approval.required') approvals.resolve(runId, event.call_id, 'approved');
-      expect(event.type).not.toBe('run.error');
+    });
+    const approvals = createApprovals();
+    const sessions = createSessions();
+    let runId = '';
+    try {
+      for await (const event of runAgent(
+        {
+          config,
+          provider: scripted('O'),
+          model: 'test',
+          mcp: client,
+          approvals,
+          sessions,
+          logger: f.runtime.logger,
+        },
+        { message: 'Cancel', session_id: 'sdk-session' },
+        controller.signal,
+      )) {
+        AgentEventSchema.parse(event);
+        expect(JSON.stringify(event)).not.toContain('server-secret-token');
+        if (event.type === 'run.started') runId = event.run_id;
+        if (event.type === 'approval.required') approvals.resolve(runId, event.call_id, 'approved');
+        if (mode === 'lost response') expect(event.type).not.toBe('run.error');
+      }
+      expect(committed).toBe(1);
+      expect(calls.filter((c) => c.action === 'execute')).toHaveLength(
+        mode === 'lost response' ? 2 : 1,
+      );
+      if (mode === 'lost response')
+        expect(calls[1]?.idempotency_key).toBe(calls[2]?.idempotency_key);
+      const lease = sessions.acquire('sdk-session');
+      expect(JSON.stringify(lease.history)).toContain('requires_user_approval');
+      expect(JSON.stringify(lease.history)).not.toContain('unknown_outcome');
+      lease.release();
+      expect(approvals.size).toBe(0);
+    } finally {
+      await client.close();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await f.close();
     }
-    expect(committed).toBe(1);
-    expect(calls.filter((c) => c.action === 'execute')).toHaveLength(2);
-    expect(calls[1]?.idempotency_key).toBe(calls[2]?.idempotency_key);
-  } finally {
-    await client.close();
-    server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    await f.close();
-  }
-});
+  },
+);
 const entry = fileURLToPath(
   new URL('../../../mcp-server/dist/transports/http.js', import.meta.url),
 );

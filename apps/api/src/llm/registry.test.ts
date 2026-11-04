@@ -255,3 +255,73 @@ it('auto Ollama uses strict prompted mode when native schemas cannot represent t
   expect(events[0]).toMatchObject({ type: 'tool_call', arguments: { date: '2026-11-03' } });
   expect(seen[0]).not.toHaveProperty('tools');
 });
+
+describe('provider credential origin boundary', () => {
+  it.each([
+    ['host', 'https://old.example/v1', 'https://new.example/v1', false],
+    ['port', 'https://old.example:8443/v1', 'https://old.example:9443/v1', false],
+    ['scheme', 'http://old.example/v1', 'https://old.example/v1', false],
+    ['path', 'https://old.example/v1', 'https://old.example/other', true],
+    ['normalized origin', 'https://OLD.example:443/v1', 'https://old.example/other', true],
+  ])('%s change handles the stored key without exposing it', (_name, from, to, retained) => {
+    const key = 'origin-bound-secret';
+    const manager = new ProviderManager(config({ LLM_BASE_URL: from, LLM_API_KEY: key }));
+    let logs = '';
+    const logger = createLogger('info', {
+      write: (line) => {
+        logs += line;
+      },
+    });
+    const result = manager.update({ base_url: to });
+    logger.info(result, 'Settings updated');
+    expect(result.api_key_set).toBe(retained);
+    expect(manager.publicView().api_key_set).toBe(retained);
+    expect(JSON.stringify(result) + JSON.stringify(manager.publicView()) + logs).not.toContain(key);
+  });
+  it('keeps a replacement key on origin change and preserves explicit clear rules', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ data: [] }));
+    const manager = new ProviderManager(
+      config({ LLM_BASE_URL: 'https://old.example/v1', LLM_API_KEY: 'old-private-key' }),
+      { fetch: fetcher },
+    );
+    expect(
+      manager.update({ base_url: 'https://new.example/v1', api_key: 'new-private-key' })
+        .api_key_set,
+    ).toBe(true);
+    await manager.provider.listModels();
+    expect(fetcher.mock.calls[0]?.[1]?.headers).toMatchObject({
+      Authorization: 'Bearer new-private-key',
+    });
+    expect(manager.update({ clear_api_key: true }).api_key_set).toBe(false);
+    expect(() => manager.update({ api_key: 'new-private-key', clear_api_key: true })).toThrow();
+    try {
+      manager.update({ base_url: 'https://user:old-private-key@host' });
+    } catch (error) {
+      expect(String(error)).not.toMatch(/old-private-key|new-private-key/);
+    }
+    expect(manager.publicView().api_key_set).toBe(false);
+  });
+  it('probe and chat send no old credential after a host change, observed by a fake server', async () => {
+    const key = 'must-stay-on-old-origin';
+    const s = await server((req, response) => {
+      if (req.method === 'GET') response.end('{"data":[{"id":"test"}]}');
+      else {
+        const body = req.body as { tools?: unknown[] };
+        if (body.tools?.length)
+          response.end(
+            'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"probe-call","function":{"name":"record_number","arguments":"{\\"n\\":7}"}}]},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n',
+          );
+        else response.end(done);
+      }
+    });
+    const manager = new ProviderManager(
+      config({ LLM_BASE_URL: 'http://localhost:1/v1', LLM_API_KEY: key }),
+    );
+    expect(manager.update({ base_url: `${s.url}/v1` }).api_key_set).toBe(false);
+    expect(await manager.probe()).toMatchObject({ ok: true });
+    await collect(manager.provider);
+    expect(s.requests).toHaveLength(3);
+    expect(s.requests.every((req) => req.authorization === undefined)).toBe(true);
+    expect(JSON.stringify(manager.publicView())).not.toContain(key);
+  });
+});

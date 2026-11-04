@@ -1093,7 +1093,7 @@ Git evidence below is inspected at baseline `3247bcf`; the initial repository co
 Copy this structure, replace the example values with facts, and allocate the next unused H-number. Keep full relevant prompts in a text fence or details block; redact credentials and mark redactions.
 
 ```markdown
-## H022: Descriptive task title
+## H024: Descriptive task title
 
 - Date: YYYY-MM-DD; agent/tool: actual name, or unknown.
 - Branch and base commit: actual branch/hash.
@@ -1265,3 +1265,66 @@ Exact implementation approval: “Implement the plan.”
 - `pnpm smoke:chat` passed on the final compiled build: read O-EDGE-LATE (late=true), preview O-0192 without mutation, approve via HTTP, execute cancellation, verify cancelled status and actor ai. The script printed the complete event transcript without any token/key. Both processes and the seeded DB were temporary; no external inference requests.
 - `pnpm llm:live` now requires LLM_LIVE=1 and uses real selected Ollama configuration only when explicitly opted in; it probes and asks a read-only seeded-DB question with only read tools exposed. Real provider execution was not performed. The CLI integration test used a local fake Ollama endpoint and confirmed secrets never appear in stdout/stderr. Official Ollama cloud/auth docs were read to confirm API base, bearer auth and exact API model names versus CLI cloud aliases; README links those sources and does not promise fixed free-tier quotas.
 - Recorded failures/corrections: first full test run passed 840 tests but the expanded CLI process test exceeded its former five-second Vitest budget; it now has twenty seconds (child execution remains bounded), and the final full gate passes. One unused mock argument was fixed before final lint. The native catalog date-union failure and strict auto prompted fallback are described above; explicit native semantics remain unchanged. All requested gates are complete; no live-key test claimed.
+
+## H022: Phase 4 review fixes — Fix 1
+
+- Date: 2026-11-03; agent/tool: Codex; branch/base: feat/phase-3, f4709e8. Status: in progress, uncommitted.
+- Exact implementation approval: “Implement the plan.” Approved plan executes fixes in order and stops after each fix for a specific “commit approved”; no commit approval has been received.
+- Exact relevant task: “FIX 1: the stored API key must not follow a changed base URL.
+  In ProviderManager.update: if the new base_url origin (scheme + host + port) differs from the current origin, DROP the stored key unless the same update supplies api_key. A same-origin path change keeps the key. A provider change already resets the key; keep that. publicView().api_key_set must reflect the result, and the PUT response must make it visible that the key was cleared (api_key_set: false). Update docs/api.md (providers section) and apps/api/README.md.
+  Tests: host change drops the key; port change drops the key; scheme change drops the key; same-origin path change keeps the key; host change with a new api_key in the same request keeps the new key; clear_api_key still works; setting both api_key and clear_api_key is still rejected; the key never appears in any response, log line, or error in any of these cases; probe and chat after a host change do not send the old key (assert on the fake server's received headers).
+  Commit message: "fix(api): drop stored key when provider origin changes".”
+- Git constraints: never perform remote/branch/destructive operations; no commit/amend/tag without approval for that specific commit; show status/diff/proposed explicit file list and message, then stop. Files stay unstaged until approval. User-staged AGENTS.md is unrelated and must remain untouched/excluded from the fix commit.
+- Applied changes: validate the candidate configuration before comparing normalized URL origins; clear an unreplaced credential on changed origin, retain path-only credentials and provider-change semantics. Update provider docs and tests. Verification pending; fixes 2–5 not started.
+
+### H022 Fix 1 verification and commit checkpoint — 2026-11-04
+
+- Status: implemented, verified, uncommitted; awaiting the user's specific commit approval. Exact follow-up: “--continue”. Fixes 2–5 remain unstarted.
+- Verification actually completed in the preceding session: pnpm typecheck, pnpm build and pnpm lint passed. Focused command: pnpm exec vitest run src/llm/registry.test.ts src/tests/chat.test.ts src/tests/config.test.ts src/llm/config.test.ts (from apps/api), 128/128 tests across four files passed. Tests cover host/port/scheme changes, normalized same-origin path changes, replacement/clearing/conflict behavior, HTTP visibility/redaction, and real local fake-server headers for probe/chat after a host change. No live provider requests.
+- This continuation rechecked git status/diff and git diff --check; no implementation changes or redundant test reruns. Fix paths: apps/api/src/llm/registry.ts, apps/api/src/llm/registry.test.ts, apps/api/src/tests/chat.test.ts, docs/api.md, apps/api/README.md, docs/change-history.md.
+- Staging/commit state: all six fix files remain unstaged; pre-existing staged AGENTS.md belongs to the user and is excluded. Proposed message: fix(api): drop stored key when provider origin changes. No Git write command has been run for this fix.
+
+## H023: Combined Phase 4 review fixes 2–5
+
+- Date: 2026-11-04; agent: Codex; branch/base: feat/phase-3, 2093049. Status: in progress, uncommitted.
+- Exact steering prompt: “fix the 2 to 5 fixes at once,,,just needed only one commit for them”. This supersedes separate commit checkpoints for fixes 2–5; one combined commit will be proposed, still requiring specific commit approval. Read-only inspection found Fix 1 already committed by the user as 2093049; the working tree was clean. No Git write commands have been run by this agent.
+- Scope: shield approved writes from browser/user cancellation but retain deadline/shutdown abort; truthful real/unknown outcome history and read-before-retry prompt rule; sanitized contextual error/warn logs; remove synthetic approval text.delta; clarify URL/key docs. Preserve existing MCP contracts and strict types. Verification pending.
+
+### H023 exact original requirements for combined work
+
+```text
+FIX 2: approved writes must complete even if the browser disconnects, and history must not lie.
+(a) After the human approves, run the execute MCP call under the run deadline signal ONLY. Client disconnect and user cancel must not abort it; only the run deadline or server shutdown may abort it. Reuse the same idempotency key on any retry.
+(b) Persist the REAL outcome of the executed write to the session history, and emit tool.result when the stream is still open.
+(c) When cleanup completes interrupted tool-call groups before persisting history: use {"status":"cancelled"} only for calls that never reached execution; for an approved write whose outcome is not known use {"status":"unknown_outcome","note":"The write may have committed; inspect current state before any new write."}.
+(d) Update the system prompt: after any unknown_outcome the model must inspect current state with read tools and must never retry the write blindly or assume it failed.
+(e) Server shutdown must abort cleanly and mark any in-flight approved write unknown_outcome. Stop accepting new runs first.
+Tests (fake provider, fake MCP server mimicking preview/token semantics, plus the existing real-MCP integration test): disconnect while execute is in flight -> the write commits, history holds the real result, no pending approvals remain, no unhandled rejections; disconnect before approval -> cancelled; disconnect during preview -> cancelled; run deadline during execute -> unknown_outcome in history; shutdown during execute -> unknown_outcome; the next turn in the same session shows the model unknown_outcome plus the new prompt rule; idempotent retry after a lost response returns the stored result and does not double-apply; user cancel via POST /api/chat/:runId/cancel after approval does not abort the execute.
+Commit message: "fix(api): shield approved writes from client disconnect and record real outcomes".
+
+FIX 3: log chat route failures server-side.
+In routes/chat.ts, log caught errors with request.log.error including run_id, session_id when present, and the error passed through the existing redaction path; the client still receives only the generic run.error message. Also log host close-path and stream-level failures at warn with run_id. Never log prompts, tool results, tokens, keys, or Authorization headers.
+Tests: a failing event loop produces exactly one error log entry containing run_id and no secrets, and the client still receives a generic run.error; a client abort produces no error-level log; secrets planted in the thrown error are redacted in the log line.
+Commit message: "fix(api): log chat stream failures with run context".
+
+FIX 4 (small): remove the synthetic "Proposed <tool>: {json}. Explicit approval is required." text.delta emitted before approval.required. The structured approval.required event is the single source of truth for the UI. Update run.test.ts, chat.test.ts, docs/api.md (chat transcript example), and scripts/smoke-chat.mjs and scripts/chat-fixture.mjs if they depend on it.
+Commit message: "fix(api): drop duplicate approval text from the event stream".
+
+FIX 5 (docs): in .env.example, comment LLM_BASE_URL as: "optional override; default is https://ollama.com for LLM_PROVIDER=ollama (Ollama Cloud, needs LLM_API_KEY); local Ollama: http://localhost:11434". Add a one-line note that changing the base URL clears the stored key unless a new one is supplied. Keep apps/api/README.md and docs/api.md consistent.
+Commit message: "docs(api): clarify LLM base URL default and key handling".
+```
+
+- Later explicit scope/commit override (exact): “fix the 2 to 5 fixes at once,,,just needed only one commit for them”. Specific commit approval is still pending; the four original messages above are historical requested messages, superseded by the single combined proposal below.
+
+### H023 implementation and verification checkpoint — 2026-11-04
+
+- Status: combined fixes 2–5 implemented and verified, uncommitted. No staged files and no Git write commands. Fix 1 is already present as the user's commit 2093049; it is not part of this combined change.
+- Approved execution starts synchronously from approval resolution as a tracked promise independent of generator/SSE consumption. Its signal combines only deadline and server shutdown; client disconnect and user cancellation stop subsequent model/preview work but do not abort that promise. Cleanup waits for settlement, records the real redacted result, and retains session/run locks until done. SDK retries use the same token/key. Uncertain abort/transport outcomes use the exact unknown_outcome payload, never a false cancelled result. Reconciliation is per assistant group to handle reused provider call IDs correctly.
+- Unknown-outcome safety notes survive bounded history compaction/context trimming, using validated host-format records rather than promoting arbitrary assistant text into system instructions. Next-turn prompts require read inspection and forbid blind retries or assumptions of failure. Shutdown rejects admission first, interrupts execution through a separate signal, then drains before closing resources.
+- Logging: unexpected event-loop failures emit one error with run/session context and a safe error-category representation passed through captured credential redaction. Arbitrary messages, causes, stacks and enumerable error payloads are intentionally omitted to prevent accidental prompt/tool/token disclosure. Client aborts emit no error-level log; close/stream failures emit safe run-scoped warnings. Client errors remain generic.
+- Removed the synthetic approval text.delta; approval.required is the single UI preview source. Updated system prompt, unit/HTTP assertions and docs transcript. Existing smoke scripts depend only on structured events, so script source changes were unnecessary; the smoke test proves the new event order. Updated exact .env.example override/default comment and origin-versus-path credential-clearing note, API README, API docs and project specification.
+- Actual verification on restored temporary Node 22.22.0/pnpm 10.34.9: pnpm typecheck, pnpm build, pnpm lint, pnpm test all passed. Tests: shared 46, core 272, MCP 144, API 404 = 866 passed across 55 files. Focused agent/HTTP/SDK/route coverage suite passed 118/118 before the final shutdown test was included in the full suite. Existing real built MCP integration ran successfully. No skipped final tests and no unhandled rejections were reported.
+- pnpm smoke:chat passed: late delivery read, approval.required without preceding synthetic preview text, approved cancellation and actor=ai verified on temporary seeded DBs. No real LLM/key calls. Formatting checks and git diff --check passed. Initial fake-server test launch approval review timed out; temporary tooling from the earlier session was also absent. Restored tooling under /tmp and retried local tests successfully; no blocking condition remains.
+- Changed files: .env.example; apps/api/src/agent/{approvals.ts,error-log.ts,history.ts,host.ts,integration.test.ts,prompts.ts,run.test.ts,run.ts}; apps/api/src/routes/chat.ts; apps/api/src/tests/chat.test.ts; apps/api/README.md; docs/api.md; docs/FoodOps MCP Project Documentation & MVP Plan.md; docs/change-history.md. No migrations, shared event variants, existing REST fields, MCP tools or MCP tests changed.
+- Frontend changes: remove reliance on the duplicate approval text.delta; render approval.required. Disconnect/cancel no longer implies an approved write stopped; inspect persisted/current state. tool.result retains the real outcome while connected. unknown_outcome is history safety data with mandatory read-before-retry guidance, not a new event type. Provider response fields are unchanged; URL/key documentation matches existing Fix 1 behavior.
+- Proposed single commit: fix(api): preserve approved writes and harden chat lifecycle. Awaiting “commit approved” before staging these explicit files and creating that commit.

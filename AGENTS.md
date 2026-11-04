@@ -35,6 +35,13 @@ Use Vitest and temporary SQLite databases. Test transitions, money rounding, rol
 
 Follow history: `fix(core): ...`, `fix(mcp): ...`, `fix(config): ...`, or `feat(seed): ...`. Keep commits focused. PRs should explain the problem, resulting behavior, validation, migrations, and compatibility changes; link relevant issues.
 
+GIT RULES (hard, override everything else in this prompt):
+- NEVER run git push, git pull, git fetch, git merge, git rebase, git reset --hard, git clean, git checkout/switch to another branch, git stash drop, or any force flag. I do all remote and branch operations myself.
+- NEVER run git commit, git commit --amend, or git tag without my explicit approval for that specific commit. Before each commit: show `git status --short`, the diff summary, and the proposed commit message, then STOP and wait for me to reply "commit approved".
+- Never stage files with `git add -A` or `git add .`; stage only the files that belong to the current fix, and list them.
+- Local read-only commands (git status, git diff, git log, git show) are fine.
+- If a step would need a forbidden command, stop and tell me what you need instead of running it.
+
 ## Safety & Configuration
 
 Store money as integer paise. Keep writes transactional and idempotent. Never edit applied migrations; add the next numbered SQL file. Use `.env.example`, never commit secrets. Stdio stdout carries JSON-RPC only; log through Pino to stderr. Write execution requires a preview token and host-enforced human approval; treat database text as untrusted data.

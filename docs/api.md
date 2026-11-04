@@ -292,7 +292,7 @@ if (!response.ok) throw await response.json();
 // Parse response.body as SSE, allowing arbitrary byte boundaries and heartbeat comments.
 ```
 
-CORS, exposed headers, security headers, rate-limit headers and X-Request-Id are copied to the hijacked response. Writes respect socket backpressure; a 256 KiB blocked buffer closes/aborts the run rather than accumulating unlimited output. Client disconnect aborts the LLM, approval wait and MCP requests. An in-flight write may already have committed: cancellation does not imply rollback. Refresh order state before starting another write.
+CORS, exposed headers, security headers, rate-limit headers and X-Request-Id are copied to the hijacked response. Writes respect socket backpressure; a 256 KiB blocked buffer closes/aborts the run rather than accumulating unlimited output. Client disconnect aborts the LLM, approval wait and read/preview MCP requests. Once approved, execution is shielded from disconnect and user cancellation and finishes with the same retry key; session history retains the real outcome even if the stream closes. Only run deadline or server shutdown may abort execution, recording unknown_outcome. The next turn must inspect current state with read tools and must never blindly retry or assume failure.
 
 Complete example transcript (IDs, preview fields and timings illustrative):
 
@@ -302,9 +302,6 @@ data: {"type":"run.started","run_id":"run-1","session_id":"session-1","provider"
 
 event: tool.call
 data: {"type":"tool.call","call_id":"call-1","name":"cancel_order","arguments":{"order_id":"O-0192","reason":"Operator request"},"kind":"write"}
-
-event: text.delta
-data: {"type":"text.delta","text":"Proposed cancellation of O-0192 and refund ₹494.35. Explicit approval is required."}
 
 event: approval.required
 data: {"type":"approval.required","call_id":"call-1","name":"cancel_order","preview":{"order_id":"O-0192","to_status":"cancelled","refund_amount_paise":49435,"refund_amount_display":"₹494.35"},"expires_at":"2026-11-03T12:05:00Z"}
@@ -334,7 +331,7 @@ Content-Type: application/json
 {"call_id":"call-1","decision":"approved"}
 ```
 
-Decision is only `approved` or `rejected`; use the cancel endpoint to stop a run. The response repeats `{run_id,call_id,decision}`. Identical decisions replay 200 without another execution; conflicting/expired/cancelled decisions return 409 CONFLICT. Unknown runs/call IDs return 404 NOT_FOUND. Completed runs retain identity for 30 minutes, at most 100 completed records; active records are never evicted. Expired retention returns 404. Cancellation repeats return 200; cancelling a normally completed run returns 409. Approval tokens and execution idempotency keys remain private to the host and are never accepted from the client.
+Decision is only `approved` or `rejected`; use the cancel endpoint to stop a run. The response repeats `{run_id,call_id,decision}`. Identical decisions replay 200 without another execution; conflicting/expired/cancelled decisions return 409 CONFLICT. Unknown runs/call IDs return 404 NOT_FOUND. Completed runs retain identity for 30 minutes, at most 100 completed records; active records are never evicted. Expired retention returns 404. Cancellation repeats return 200; cancelling a normally completed run returns 409. Cancellation after approval stops further model work but does not abort execution. Approval tokens and execution idempotency keys remain private to the host and are never accepted from the client.
 
 Before stream headers, errors use the standard JSON envelope. After headers, failures use terminal `run.error {kind,message,retryable}`; limits instead emit explanatory text and run.completed. Exactly one terminal AgentEvent ends normal delivery. Full AgentEvent schemas live in packages/shared; thinking.delta is streamed separately and never persisted in model history.
 
@@ -342,7 +339,7 @@ Before stream headers, errors use the standard JSON envelope. After headers, fai
 
 ProviderPublicConfig is `{provider,base_url,model,tool_mode,effective_tool_mode,temperature,num_ctx,api_key_set,capabilities:{toolCalling,streaming,thinking}}`. `model` may be null. GET adds `last_probe` (current-config result within the ten-minute cache, or null). No API key is returned, including after PUT.
 
-ProviderUpdate accepts only optional `provider`, `base_url`, `model`, `tool_mode`, `temperature` (0–2), `num_ctx` (positive safe integer), write-only `api_key`, and `clear_api_key`. Set and clear together is invalid. URLs use the existing HTTP(S)/no-credentials/no-metadata restrictions. Updates validate atomically, invalidate probe results, affect subsequent runs, and never persist to disk. Changing provider selects its default URL and clears an old key unless replacements are supplied. Existing runs retain their captured provider instance.
+ProviderUpdate accepts only optional `provider`, `base_url`, `model`, `tool_mode`, `temperature` (0–2), `num_ctx` (positive safe integer), write-only `api_key`, and `clear_api_key`. Set and clear together is invalid. URLs use the existing HTTP(S)/no-credentials/no-metadata restrictions. Updates validate atomically, invalidate probe results, affect subsequent runs, and never persist to disk. Changing provider selects its default URL and clears an old key unless replacements are supplied. Changing base_url to a different origin (scheme, host or port) also clears the stored key unless that same update supplies api_key; the PUT response then shows api_key_set:false. A same-origin path change preserves the key. Existing runs retain their captured provider instance.
 
 ```json
 {"provider":"ollama","base_url":"https://ollama.com","model":"your-exact-model-id","tool_mode":"auto","api_key":"<server-only-key>"}
@@ -375,3 +372,5 @@ All new endpoints also consume the overall bucket. Approval/cancel/PUT settings 
 `pnpm smoke:chat` builds on local compiled modules, starts temporary MCP/API listeners and a scripted provider, reads late delivery data, approves cancellation over HTTP and verifies actor ai in order_events. It never contacts an external provider. Build first. `LLM_LIVE=1 pnpm llm:live` is opt-in and may incur usage: it runs a real Ollama probe plus one read-only seeded-DB question through a temporary MCP/API fixture. Only read tools are available, no write can execute, and printed output is redacted.
 
 In auto mode, Ollama catalogs with schemas that its native profile cannot represent use strict prompted tools for that call, even if the dummy native probe succeeds. Explicit native mode fails clearly. This avoids weakening JSON Schema constraints. Capabilities and effective_tool_mode describe the general selected mode; actual catalog compatibility may force this per-call fallback.
+
+LLM_BASE_URL is an optional override: the default for LLM_PROVIDER=ollama is https://ollama.com (Ollama Cloud, requires LLM_API_KEY); local Ollama uses http://localhost:11434. Changing its origin clears the stored key unless the same update supplies a replacement; same-origin path changes keep it. The UI should render approval.required directly; the synthetic Proposed text.delta has been removed. Real outcome tool.result is emitted when the stream is open; detached runs still settle history. Unexpected chat failures are logged with safe error categories and run/session context; original error payloads, prompts, tool data, tokens and credentials are omitted.
