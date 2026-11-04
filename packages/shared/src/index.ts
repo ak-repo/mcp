@@ -16,3 +16,4 @@ export * from './schemas/restaurant.js';
 export * from './schemas/responses.js';
 export * from './schemas/agent.js';
 export * from './schemas/chat.js';
+export * from './schemas/web-wire.js';
