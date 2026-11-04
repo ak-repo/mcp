@@ -9,7 +9,7 @@
     "pnpm": ">=10 <11"
   },
   "scripts": {
-    "build": "tsc -b packages/shared packages/core apps/mcp-server apps/api",
+    "build": "tsc -b packages/shared packages/core apps/mcp-server apps/api && pnpm --filter @foodops/web build",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint . --max-warnings 0",
     "test": "pnpm -r test",
@@ -21,7 +21,9 @@
     "start:api": "pnpm --filter @foodops/api start:api",
     "smoke:api": "node scripts/smoke-api.mjs",
     "llm:live": "node scripts/llm-live.mjs",
-    "smoke:chat": "node scripts/smoke-chat.mjs"
+    "smoke:chat": "node scripts/smoke-chat.mjs",
+    "dev:web": "pnpm --filter @foodops/web dev",
+    "build:web": "pnpm --filter @foodops/web build"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -31,6 +33,9 @@
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "typescript-eslint": "8.72.1",
-    "vitest": "5.0.5"
+    "vitest": "5.0.5",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.7",
+    "globals": "17.13.0"
   }
 }

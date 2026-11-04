@@ -1,6 +1,6 @@
 # FoodOps MCP
 
-Seeded food-order, delivery, refund, and invoice operations exposed through Model Context Protocol. Node.js 22, strict TypeScript, pnpm, SQLite, Zod, and the pinned MCP SDK. The current applications are the MCP backend and the dashboard REST API.
+Seeded food-order, delivery, refund, and invoice operations exposed through Model Context Protocol. Node.js 22, strict TypeScript, pnpm, SQLite, Zod, and the pinned MCP SDK. The applications are the MCP backend, dashboard REST API and React 18/Vite web foundation.
 
 From the workspace root, with Node 22 and pnpm 10 active:
 
@@ -91,3 +91,9 @@ Rate limits are independent per IP: overall `RATE_LIMIT_PER_MIN=1200` (including
 Simulator backlog: `SIMULATOR_MAX_ACTIVE=60` (positive safe integer) prevents simulator placement when all active orders, including failed payments, reach the cap. External writers are not capped. Progression samples oldest untouched candidates per status (`updated_at ASC, id ASC`), excluding failed payments. Status adds `ticks_waiting_for_partner`, counting once per tick where any pickup candidate waits for a partner; other actions may still progress.
 
 Audit history retention is controlled by CALL_LOG_RETENTION_DAYS (default 30). Its feed cursor is monotonic across pruning. Runtime.shutdown() stops and awaits background work, closes streams/tickets, and then closes DB handles; close() returns the same shutdown promise and must be awaited. Close Fastify before disposing an embedded runtime so HTTP handlers can drain.
+
+## Web foundation
+
+See [the web guide](apps/web/README.md). Run pnpm dev:web at http://127.0.0.1:5173; the /api proxy targets port 3002. Existing .env files need WEB_ORIGIN to include that exact origin. Never put credentials in VITE_ variables or browser persistence.
+
+pnpm build compiles shared, core, MCP and API first, then independently typechecks/bundles web. pnpm build:web builds shared and web only. Recursive typecheck/test and root lint include web. Shared package exports require built output; web commands build shared automatically. Dashboard features are deferred to Phase 5a.

@@ -62,7 +62,7 @@ Version 0.1 · 1 Nov 2026 · Stack: Node.js + TypeScript, SQLite, React + TypeSc
 | Tests | Vitest | Unit and integration. |
 | Frontend | React 18 + Vite + TypeScript | Standard, fast dev loop. |
 | UI | Tailwind CSS + shadcn/ui + Recharts | Polished look with little custom CSS. |
-| Data fetching | TanStack Query + native `EventSource` | Cache plus live updates. |
+| Data fetching | TanStack Query + fetch-based SSE | Cache plus live updates. |
 | Seed data | `@faker-js/faker` with fixed seed | Deterministic dataset. |
 
 ## 4. Repository Layout

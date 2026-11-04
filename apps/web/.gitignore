@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local configuration; all VITE_ values are public.
+.env
+.env.*
+!.env.example
+coverage/
+*.tsbuildinfo

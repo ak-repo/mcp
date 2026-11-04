@@ -2,14 +2,15 @@
 
 ## Project Structure & Architecture
 
-Read `docs/FoodOps MCP Project Documentation & MVP Plan.md` before changing behavior; it is the source of truth. Current scope is the MCP backend only.
+Read `docs/FoodOps MCP Project Documentation & MVP Plan.md` before changing behavior; it is the source of truth. Phases 0–4 include MCP, API and agent functionality; apps/web is a React/Vite foundation awaiting Phase 5 features.
 
 - `packages/shared/src`: Zod schemas, DTOs, money helpers, and shared errors.
 - `packages/core/src`: domain rules, repositories, services, database access, and deterministic seed; SQL migrations live in `packages/core/migrations`.
 - `apps/mcp-server/src`: thin MCP tools, resources, prompts, and transports. Keep SQL and business rules in core.
+- apps/api owns REST/SSE and the agent host; apps/web owns browser presentation and calls only the API. Neither app imports another app.
 - Tests sit beside source as `*.test.ts`; transport contract snapshots live under `__snapshots__`. SQLite files belong in gitignored `data/`; generated output goes to `dist/`.
 
-Dependency direction is `mcp-server → core → shared`, never reversed.
+Dependency direction is apps → packages and core → shared, never reversed. Shared remains browser-safe.
 
 ## Build, Test, and Development Commands
 
@@ -19,7 +20,8 @@ Use Node 22 and pnpm 10 from the workspace root.
 - `pnpm migrate`: apply numbered migrations; `pnpm seed`: populate deterministic demo data.
 - `pnpm seed --reset`: replace the demo database; stop servers first.
 - `pnpm --silent dev:mcp`: run development stdio without pnpm stdout banners.
-- `pnpm build`: compile packages in dependency order.
+- `pnpm build`: compile backend packages in dependency order, then independently typecheck and bundle web.
+- pnpm dev:web starts Vite on 127.0.0.1:5173; pnpm build:web builds shared and web.
 - `pnpm start:http`: run compiled HTTP with configured bearer authentication.
 - `pnpm typecheck && pnpm build && pnpm lint && pnpm test`: run acceptance checks. Build before tests because process tests execute compiled files.
 
