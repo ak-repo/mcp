@@ -13,9 +13,20 @@ export default tseslint.config(
     languageOptions: { globals: globals.browser },
     plugins: { 'react-hooks': reactHooks, 'react-refresh': reactRefresh },
     rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'JSXAttribute[name.name="dangerouslySetInnerHTML"]',
+          message: 'Render untrusted content as text only.',
+        },
+      ],
       ...reactHooks.configs.flat.recommended.rules,
       ...reactRefresh.configs.vite.rules,
     },
+  },
+  {
+    files: ['apps/web/public/**/*.js'],
+    languageOptions: { globals: globals.browser },
   },
   {
     files: ['apps/web/*.config.ts'],

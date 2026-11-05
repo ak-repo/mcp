@@ -21,10 +21,19 @@ Dependency direction: **apps → packages; core → shared**. Applications never
 │   │   ├── src/{lib,tools,resources,prompts,transports}/
 │   │   └── README.md
 │   └── web/
-│       ├── src/{App.tsx,main.tsx,shared.test.ts}
+│       ├── public/theme-init.js
+│       ├── src/
+│       │   ├── app/
+│       │   ├── lib/{api,live}/
+│       │   ├── features/{auth,system}/
+│       │   ├── components/{ui,common}/
+│       │   ├── styles/
+│       │   ├── test/
+│       │   └── {App.tsx,main.tsx,shared.test.ts}
 │       ├── index.html
 │       ├── package.json
 │       ├── tsconfig{,.app,.node}.json
+│       ├── postcss.config.js
 │       ├── vite.config.ts
 │       ├── vitest.config.ts
 │       └── README.md
@@ -48,4 +57,4 @@ Tests are colocated or under package test directories; build output is ignored d
 
 Use Node 22 and pnpm 10. Root build compiles shared → core → backend apps through tsc -b, then runs the independent web build. Web uses Bundler resolution and noEmit and stays outside backend project references. It consumes built shared exports; its dev/typecheck/test scripts build shared first. Root typecheck/test recurse across packages, while root lint applies browser/React rules to web and backend rules elsewhere.
 
-The web package is only a verified foundation. UI features, routing, styles and query libraries arrive in Phase 5a. Browser requests go through the API; database, MCP and LLM access remain server-side.
+Web uses feature folders for auth and System status; app owns routing/providers/shell, lib/api owns schema-validated HTTP and memory-only auth, and lib/live owns fetch SSE and batched cache invalidation. UI primitives live in components/ui and shared presentation in components/common. Tailwind 4 uses PostCSS; external public/theme-init.js applies non-secret preferences before React. Only login, System status and 404 routes exist. Browser requests go through the API; database, MCP and LLM access remain server-side.
