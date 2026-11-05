@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/button.js';
 import { Input } from '../../components/ui/input.js';
 import { Label } from '../../components/ui/label.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card.js';
+import { PreviewRenderer } from './preview-renderers.js';
 
 type Props = {
   orderId: string;
@@ -89,18 +90,7 @@ export function WriteFlow({ orderId, input, onSuccess, onCancel }: Props) {
           maxLength={500}
           disabled={state === 'executing' || state === 'success'}
         />
-        {preview && (
-          <dl className="preview-grid">
-            {Object.entries(preview)
-              .filter(([name]) => !['confirmation_token', 'expires_at'].includes(name))
-              .map(([name, value]) => (
-                <div key={name}>
-                  <dt>{name.replaceAll('_', ' ')}</dt>
-                  <dd>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd>
-                </div>
-              ))}
-          </dl>
-        )}
+        {preview && <PreviewRenderer preview={preview} />}
         {input.operation === 'reassign' && (
           <p className="muted">Only available partners can be selected.</p>
         )}

@@ -12,6 +12,7 @@ import {
   UserRound,
   UtensilsCrossed,
   Truck,
+  Bot,
 } from 'lucide-react';
 import { authStore } from '../lib/api/auth-store.js';
 import { useLive } from '../lib/live/live-context.js';
@@ -68,6 +69,10 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
       <NavLink to="/deliveries" className="nav-item" onClick={onNavigate}>
         <Truck size={18} aria-hidden="true" />
         Deliveries
+      </NavLink>
+      <NavLink to="/assistant" className="nav-item" onClick={onNavigate}>
+        <Bot size={18} aria-hidden="true" />
+        Assistant
       </NavLink>
     </nav>
   );
@@ -282,6 +287,10 @@ export function Shell() {
                 >
                   <UtensilsCrossed size={18} aria-hidden="true" />
                   Orders
+                </CommandItem>
+                <CommandItem onSelect={() => { setCommand(false); void navigate('/assistant'); }}>
+                  <Bot size={18} aria-hidden="true" />
+                  Assistant
                 </CommandItem>
               </CommandGroup>
             </CommandList>

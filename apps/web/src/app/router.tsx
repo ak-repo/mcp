@@ -53,6 +53,18 @@ export function createAppRouter() {
                   .DeliveriesPage,
               }),
             },
+            {
+              path: '/assistant',
+              lazy: async () => ({
+                Component: (await import('../features/assistant/assistant-page.js')).AssistantPage,
+              }),
+            },
+            {
+              path: '/settings',
+              lazy: async () => ({
+                Component: (await import('../features/settings/settings-page.js')).SettingsPage,
+              }),
+            },
           ],
         },
       ],

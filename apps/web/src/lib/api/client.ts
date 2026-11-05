@@ -146,7 +146,43 @@ export function createApiClient(options: {
       throw new ContractError();
     return response.body;
   }
-  return { apiFetch, apiFetchWithMeta, openStream };
+  async function openChat(
+    body: unknown,
+    signal: AbortSignal,
+  ): Promise<ReadableStream<Uint8Array>> {
+    const target = url('/api/chat');
+    const generation = store.getSnapshot().generation;
+    const token = store.getToken();
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (signal.aborted) controller.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    try {
+      const response = await fetcher(target, {
+        method: 'POST',
+        headers: new Headers({
+          Accept: 'text/event-stream',
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        }),
+        body: JSON.stringify(body),
+        signal: controller.signal,
+        credentials: 'omit',
+        redirect: 'error',
+      });
+      await check(response, token ? generation : undefined, token ?? undefined);
+      if (!response.headers.get('Content-Type')?.startsWith('text/event-stream') || !response.body)
+        throw new ContractError();
+      return response.body;
+    } catch (error) {
+      if (signal.aborted) throw new DOMException('Request cancelled.', 'AbortError');
+      if (error instanceof ApiError || error instanceof ContractError) throw error;
+      throw new NetworkError();
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
+  }
+  return { apiFetch, apiFetchWithMeta, openStream, openChat };
 }
 
 export const api = createApiClient({
@@ -154,3 +190,4 @@ export const api = createApiClient({
 });
 export const apiFetch = api.apiFetch;
 export const apiFetchWithMeta = api.apiFetchWithMeta;
+export const openChat = api.openChat;

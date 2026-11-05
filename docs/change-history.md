@@ -1482,3 +1482,20 @@ Commit message: "feat(web): app shell, auth, api client and live updates".
 - Date: 2026-11-05; agent/tool: Codex; branch/base: feat/phase-five / 501f4a2. Status: implemented, uncommitted; separate approval required before the 5c web commit.
 - Added additive `ReassignPreviewResponseSchema` and inferred type by extending the existing strict `ReassignPreviewSchema` with the API-issued `confirmation_token` and `expires_at`. Added a real API-shaped fixture and strictness/type rejection coverage. Existing exports and behavior remain unchanged; no API/core/MCP changes.
 - Verification: shared typecheck, lint, test (95 passed across 7 files), and build passed. Proposed commit: `feat(shared): add reassign preview token wire schema`.
+
+## H031: Phase 5d assistant streaming chat and human approval
+
+- Date: 2026-11-05; agent/tool: Codex; branch/base: feat/phase-five / ac91a0e. Status: implementation started, uncommitted.
+- Exact relevant authorization: “Implement the plan.” Task 5d adds the Assistant page, fetch-based SSE chat client, reducer, explicit approval UX, provider setup state, cancellation and tests.
+- Scope: apps/web plus this audit entry only. Reuse the existing shared AgentEvent/Provider schemas, API client, auth store, live invalidation batcher, WriteFlow preview renderers and shell primitives. No API, MCP, core, shared, endpoint or response-field changes planned.
+- Approved planning decision: add a minimal protected Settings route so provider setup callouts never point to a dead route.
+- Verification: pending; record only checks actually performed before the implementation checkpoint.
+
+### H031 implementation and verification — 2026-11-05
+
+- Status: implemented and ready for the separate web commit checkpoint. Added fetch-based POST chat streaming with strict `AgentEventSchema` parsing, fragment-safe SSE handling, reducer-driven run states, assistant transcript/tool cards, explicit approval card/dialog, cancellation, provider setup diagnostics, protected Assistant and Settings routes, preview renderer reuse, live invalidation, styling and colocated tests.
+- Security/behavior: session IDs remain memory-only; approval is submitted only by the explicit Approve button; approval dialog Escape/close does not resolve; tokens are not accepted or rendered by the browser; assistant/tool text is rendered as inert text; successful tool results invalidate orders, deliveries, partners and metrics.
+- A minimal Settings page was added because the existing application had no Settings route and the provider setup requirement otherwise required a dead link. It reports server-side provider status but does not add provider mutation controls.
+- Verification performed with the repository-pinned pnpm 10.34.9 binary and Node 24.22.1 (engine warning; repository requests Node 22): web typecheck, lint, test (126 passed across 12 files), build; root typecheck, build, lint and test (shared 95, core 272, MCP 144, API 404, web 126). The first unprivileged root test attempt was blocked by sandbox loopback `listen EPERM` (90 failures/314 passes); the escalated rerun passed all suites.
+- `pnpm smoke:chat` passed against the scripted provider fixture, verifying read-tool streaming, write `approval.required`, HTTP approval, tool result, run completion and actor=ai cancellation behavior. No external LLM call was made and no browser live-provider mutation was claimed.
+- Proposed commit: `feat(web): assistant with streaming chat and human approval`. No commit, remote or branch operation has been performed; the next step is the required explicit staged-file review and commit approval.
