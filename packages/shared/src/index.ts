@@ -17,3 +17,4 @@ export * from './schemas/responses.js';
 export * from './schemas/agent.js';
 export * from './schemas/chat.js';
 export * from './schemas/web-wire.js';
+export * from './schemas/web-preview.js';
