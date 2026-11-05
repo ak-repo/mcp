@@ -3,6 +3,7 @@ import {
   AdvancePreviewResponseSchema,
   CancelPreviewResponseSchema,
   RefundPreviewResponseSchema,
+  ReassignPreviewResponseSchema,
 } from './web-preview.js';
 
 const confirmation = {
@@ -68,10 +69,28 @@ describe('REST preview wire schemas', () => {
     expect(RefundPreviewResponseSchema.parse(value)).toEqual(value);
   });
 
+  it('parses the signed reassignment preview returned by the API', () => {
+    const value = {
+      order_id: 'O-1',
+      delivery_id: 'D-1',
+      previous_partner_id: null,
+      partner_id: 'P-1',
+      previous_partner_status_after: null,
+      partner_status_after: 'busy',
+      delivery_status_after: 'assigned',
+      refund_amount_paise: 0,
+      refund_amount_display: '₹0.00',
+      requiresConfirmation: true,
+      ...confirmation,
+    };
+    expect(ReassignPreviewResponseSchema.parse(value)).toEqual(value);
+  });
+
   it.each([
     ['advance', AdvancePreviewResponseSchema, confirmation],
     ['cancel', CancelPreviewResponseSchema, confirmation],
     ['refund', RefundPreviewResponseSchema, confirmation],
+    ['reassign', ReassignPreviewResponseSchema, confirmation],
   ])('rejects unknown fields and wrong confirmation types for %s', (_name, schema, extra) => {
     expect(schema.safeParse({ ...extra, unexpected: true }).success).toBe(false);
     expect(schema.safeParse({ ...extra, confirmation_token: 123 }).success).toBe(false);

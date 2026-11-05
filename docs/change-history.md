@@ -1463,3 +1463,16 @@ Commit message: "feat(web): app shell, auth, api client and live updates".
 - Verification completed; the proposed `feat(web): overview and orders with preview-confirm write flow` commit checkpoint is ready.
 - Final verification: web typecheck, lint, test (57/57 across nine files) and build passed. Root `pnpm typecheck && pnpm build && pnpm lint && pnpm test` passed: shared 93, core 272, MCP 144, API 404 and web 57 tests. Prettier check and `git diff --check` passed.
 - Real API verification used an isolated seeded database at `/tmp/foodops-5b-live-cwbcDD/demo.sqlite`. Exact server command: `DB_PATH=/tmp/foodops-5b-live-cwbcDD/demo.sqlite API_HOST=127.0.0.1 API_PORT=3302 WEB_ORIGIN=http://127.0.0.1:5173 LOG_LEVEL=silent pnpm start:api` with generated in-memory bearer/confirmation secrets. Curl checks confirmed readiness, signed cancel preview/execute for assigned order `O-0194` released partner `DP-0001` to `available`, advance preview/execute for `O-0192` moved `placed` to `accepted`, and refund preview/execute for delivered `O-0187` produced a ₹1.00 partial refund. MCP and web servers were not needed for these direct API checks; no browser workflow or real 5b UI mutation was claimed.
+
+## H029: Phase 5c invoice, deliveries and partner reassignment
+
+- Date: 2026-11-05; agent/tool: Codex; branch/base: feat/phase-five / 501f4a2. Status: implemented, uncommitted.
+- Exact relevant authorization: “Implement the plan.” Task 5c adds invoice view, deliveries, partners and reassign preview-confirm flow.
+- Added protected invoice and deliveries routes, invoice print layout, delivery URL filters, partner status panel, reassign dialog using the existing WriteFlow, shared-schema API helpers, live/query refresh wiring and responsive/print styles. Invoice restaurant display uses the authoritative `restaurant_id` because the documented invoice/order-detail contracts do not expose a restaurant name; no endpoint was invented. Busy partner order details are shown only when supplied by the API (current schema supplies no order field).
+- Verification pending: web/root gates, focused tests, and seeded API checks for unassigned reassignment plus partner availability after assigned-order cancellation.
+
+## H030: Shared reassign preview wire prerequisite
+
+- Date: 2026-11-05; agent/tool: Codex; branch/base: feat/phase-five / 501f4a2. Status: implemented, uncommitted; separate approval required before the 5c web commit.
+- Added additive `ReassignPreviewResponseSchema` and inferred type by extending the existing strict `ReassignPreviewSchema` with the API-issued `confirmation_token` and `expires_at`. Added a real API-shaped fixture and strictness/type rejection coverage. Existing exports and behavior remain unchanged; no API/core/MCP changes.
+- Verification: shared typecheck, lint, test (95 passed across 7 files), and build passed. Proposed commit: `feat(shared): add reassign preview token wire schema`.

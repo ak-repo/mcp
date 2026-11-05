@@ -3,6 +3,7 @@ import {
   AdvancePreviewSchema,
   CancelPreviewSchema,
   RefundPreviewSchema,
+  ReassignPreviewSchema,
 } from './responses.js';
 
 const confirmation = {
@@ -14,7 +15,9 @@ const confirmation = {
 export const AdvancePreviewResponseSchema = AdvancePreviewSchema.extend(confirmation);
 export const CancelPreviewResponseSchema = CancelPreviewSchema.extend(confirmation);
 export const RefundPreviewResponseSchema = RefundPreviewSchema.extend(confirmation);
+export const ReassignPreviewResponseSchema = ReassignPreviewSchema.extend(confirmation);
 
 export type AdvancePreviewResponse = z.infer<typeof AdvancePreviewResponseSchema>;
 export type CancelPreviewResponse = z.infer<typeof CancelPreviewResponseSchema>;
 export type RefundPreviewResponse = z.infer<typeof RefundPreviewResponseSchema>;
+export type ReassignPreviewResponse = z.infer<typeof ReassignPreviewResponseSchema>;
