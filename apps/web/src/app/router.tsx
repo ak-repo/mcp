@@ -40,6 +40,19 @@ export function createAppRouter() {
                 Component: (await import('../features/orders/orders-page.js')).OrdersPage,
               }),
             },
+            {
+              path: '/orders/:id/invoice',
+              lazy: async () => ({
+                Component: (await import('../features/invoice/invoice-page.js')).InvoicePage,
+              }),
+            },
+            {
+              path: '/deliveries',
+              lazy: async () => ({
+                Component: (await import('../features/deliveries/deliveries-page.js'))
+                  .DeliveriesPage,
+              }),
+            },
           ],
         },
       ],

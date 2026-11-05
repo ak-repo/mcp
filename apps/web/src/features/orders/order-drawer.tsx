@@ -69,7 +69,17 @@ export function OrderDrawer({ orderId, onClose }: { orderId: string; onClose: ()
             </p>
             <p>Partner ID: {detail.data.delivery?.partner_id ?? '—'}</p>
             <h3>Invoice</h3>
-            <p className="muted">Invoice link will be available in a later release.</p>
+            {detail.data.order.status === 'delivered' ? (
+              <Link
+                className="button button-outline"
+                to={`/orders/${encodeURIComponent(orderId)}/invoice`}
+                onClick={onClose}
+              >
+                View invoice
+              </Link>
+            ) : (
+              <p className="muted">Invoice is issued when the order is delivered.</p>
+            )}
             <div className="drawer-actions">
               <WriteFlow
                 orderId={orderId}

@@ -160,6 +160,144 @@
   .chart-wide {
     grid-column: 1 / -1;
   }
+  .delivery-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+    gap: 1rem;
+  }
+  .delivery-filters {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .delivery-list {
+    display: grid;
+    gap: 0.5rem;
+    padding: 1rem;
+  }
+  .delivery-row {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr 1fr auto;
+    gap: 1rem;
+    align-items: center;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+  }
+  .delivery-row.is-late {
+    border-color: var(--destructive);
+    background: color-mix(in srgb, var(--cancelled-bg) 40%, var(--surface));
+  }
+  .partners-panel {
+    padding: 1.25rem;
+  }
+  .partner-counts {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin: 0.75rem 0 1rem;
+  }
+  .partners-panel ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.75rem;
+  }
+  .partners-panel li {
+    display: grid;
+    gap: 0.15rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.65rem;
+  }
+  .partners-panel li span {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .invoice-paper {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    padding: 2rem;
+    max-width: 900px;
+  }
+  .invoice-heading,
+  .invoice-parties,
+  .invoice-payment {
+    display: flex;
+    justify-content: space-between;
+    gap: 2rem;
+    margin-bottom: 2rem;
+  }
+  .invoice-heading dl,
+  .invoice-totals {
+    display: grid;
+    gap: 0.4rem;
+  }
+  .invoice-heading dl div,
+  .invoice-totals div {
+    display: flex;
+    justify-content: space-between;
+    gap: 2rem;
+  }
+  .invoice-heading dt,
+  .invoice-totals dt {
+    color: var(--muted);
+  }
+  .invoice-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1.5rem;
+  }
+  .invoice-table th,
+  .invoice-table td {
+    text-align: left;
+    padding: 0.7rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .invoice-table th:nth-child(n + 2),
+  .invoice-table td:nth-child(n + 2) {
+    text-align: right;
+  }
+  .invoice-total {
+    border-top: 2px solid var(--foreground);
+    padding-top: 0.65rem;
+    font-weight: 700;
+  }
+  @media print {
+    body {
+      background: #fff;
+      color: #000;
+    }
+    .sidebar,
+    .topbar,
+    .invoice-actions,
+    .skip-link {
+      display: none !important;
+    }
+    .app-body,
+    .page-stack,
+    .invoice-paper {
+      display: block;
+      max-width: none;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      box-shadow: none;
+    }
+    .invoice-table tr,
+    .invoice-parties,
+    .invoice-payment {
+      break-inside: avoid;
+    }
+  }
+  @media (max-width: 900px) {
+    .delivery-layout {
+      grid-template-columns: 1fr;
+    }
+    .delivery-row {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
   .chart-body {
     padding: 0 1rem 1rem;
   }

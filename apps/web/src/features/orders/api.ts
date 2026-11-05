@@ -6,6 +6,11 @@ import {
   OrderPageSchema,
   RefundPreviewResponseSchema,
   RefundResultSchema,
+  InvoiceDetailsSchema,
+  DeliveryPageSchema,
+  PartnerPageSchema,
+  ReassignPreviewResponseSchema,
+  ReassignResultSchema,
   SalesSummarySchema,
   type AdvancePreviewResponse,
   type CancelPreviewResponse,
@@ -42,6 +47,30 @@ export function getOrder(id: string, signal?: AbortSignal) {
     signal ? { signal } : {},
   );
 }
+export function getInvoice(id: string, signal?: AbortSignal) {
+  return apiFetch(
+    `/api/orders/${encodeURIComponent(id)}/invoice`,
+    InvoiceDetailsSchema,
+    signal ? { signal } : {},
+  );
+}
+export type DeliveryFilters = {
+  status?: string;
+  partner_id?: string;
+  cursor?: string;
+  limit?: number;
+};
+export function listDeliveries(filters: DeliveryFilters = {}, signal?: AbortSignal) {
+  return apiFetch(`/api/deliveries${query(filters)}`, DeliveryPageSchema, signal ? { signal } : {});
+}
+export type PartnerFilters = { status?: string; cursor?: string; limit?: number };
+export function listPartners(filters: PartnerFilters = {}, signal?: AbortSignal) {
+  return apiFetch(
+    `/api/delivery-partners${query(filters)}`,
+    PartnerPageSchema,
+    signal ? { signal } : {},
+  );
+}
 export function getSummary(
   filters: { from: string; to: string; group_by: 'day' | 'restaurant' | 'status' },
   signal?: AbortSignal,
@@ -53,11 +82,12 @@ export function getSummary(
   );
 }
 
-export type WriteOperation = 'advance' | 'cancel' | 'refund';
+export type WriteOperation = 'advance' | 'cancel' | 'refund' | 'reassign';
 export type PreviewInput =
   | { operation: 'advance'; to_status: string; reason: string }
   | { operation: 'cancel'; reason: string }
-  | { operation: 'refund'; reason: string; amount_paise: number };
+  | { operation: 'refund'; reason: string; amount_paise: number }
+  | { operation: 'reassign'; reason: string; partner_id: string };
 
 export async function previewOrder(id: string, input: PreviewInput, signal?: AbortSignal) {
   const schema = (
@@ -65,15 +95,25 @@ export async function previewOrder(id: string, input: PreviewInput, signal?: Abo
       ? AdvancePreviewResponseSchema
       : input.operation === 'cancel'
         ? CancelPreviewResponseSchema
-        : RefundPreviewResponseSchema
-  ) as ResponseSchema<AdvancePreviewResponse | CancelPreviewResponse | RefundPreviewResponse>;
+        : input.operation === 'refund'
+          ? RefundPreviewResponseSchema
+      : ReassignPreviewResponseSchema
+  ) as ResponseSchema<
+    AdvancePreviewResponse | CancelPreviewResponse | RefundPreviewResponse | Record<string, unknown>
+  >;
   const body =
     input.operation === 'advance'
       ? { reason: input.reason, to_status: input.to_status }
       : input.operation === 'cancel'
         ? { reason: input.reason }
-        : { reason: input.reason, amount_paise: input.amount_paise };
-  return apiFetch(`/api/orders/${encodeURIComponent(id)}/${input.operation}/preview`, schema, {
+        : input.operation === 'refund'
+          ? { reason: input.reason, amount_paise: input.amount_paise }
+          : { reason: input.reason, partner_id: input.partner_id };
+  const path =
+    input.operation === 'reassign'
+      ? `/api/deliveries/${encodeURIComponent(id)}/reassign/preview`
+      : `/api/orders/${encodeURIComponent(id)}/${input.operation}/preview`;
+  return apiFetch(path, schema, {
     method: 'POST',
     body,
     ...(signal ? { signal } : {}),
@@ -92,12 +132,20 @@ export async function executeOrder(
       ? { reason: input.reason, to_status: input.to_status, confirmation_token }
       : input.operation === 'cancel'
         ? { reason: input.reason, confirmation_token }
-        : { reason: input.reason, amount_paise: input.amount_paise, confirmation_token };
+        : input.operation === 'refund'
+          ? { reason: input.reason, amount_paise: input.amount_paise, confirmation_token }
+          : { reason: input.reason, partner_id: input.partner_id, confirmation_token };
+  const path =
+    input.operation === 'reassign'
+      ? `/api/deliveries/${encodeURIComponent(id)}/reassign`
+      : `/api/orders/${encodeURIComponent(id)}/${input.operation}`;
   return apiFetchWithMeta<unknown>(
-    `/api/orders/${encodeURIComponent(id)}/${input.operation}`,
+    path,
     (input.operation === 'refund'
       ? RefundResultSchema
-      : OrderMutationSchema) as ResponseSchema<unknown>,
+      : input.operation === 'reassign'
+        ? ReassignResultSchema
+        : OrderMutationSchema) as ResponseSchema<unknown>,
     { method: 'POST', body, idempotencyKey, ...(signal ? { signal } : {}) },
   );
 }

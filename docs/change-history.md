@@ -1471,6 +1471,12 @@ Commit message: "feat(web): app shell, auth, api client and live updates".
 - Added protected invoice and deliveries routes, invoice print layout, delivery URL filters, partner status panel, reassign dialog using the existing WriteFlow, shared-schema API helpers, live/query refresh wiring and responsive/print styles. Invoice restaurant display uses the authoritative `restaurant_id` because the documented invoice/order-detail contracts do not expose a restaurant name; no endpoint was invented. Busy partner order details are shown only when supplied by the API (current schema supplies no order field).
 - Verification pending: web/root gates, focused tests, and seeded API checks for unassigned reassignment plus partner availability after assigned-order cancellation.
 
+### H029 implementation and verification — 2026-11-05
+
+- Status: implemented and ready for the separate web commit checkpoint. Web gates passed: typecheck, lint, 58 tests across 10 files, and build. Root typecheck, build, lint, and test passed: shared 95, core 272, MCP 144, API 404, web 58.
+- Seeded API verification used `/tmp/foodops-5c-live-Qubrlo/demo.sqlite` and `API_PORT=3303`: readiness returned ready; reassignment preview/execute assigned unassigned `O-0192` to `DP-0009` (busy); cancellation preview/execute for assigned `O-0194` returned `DP-0001` to available; unissued invoice for `O-EDGE-UNASSIGNED` returned 404 as mapped by the UI. Exact API command was `DB_PATH=/tmp/foodops-5c-live-Qubrlo/demo.sqlite API_HOST=127.0.0.1 API_PORT=3303 WEB_ORIGIN=http://127.0.0.1:5173 ADMIN_TOKEN=[REDACTED] API_CONFIRM_SECRET=[REDACTED] LOG_LEVEL=silent pnpm start:api`; the temporary server was stopped after verification.
+- Formatting and `git diff --check` passed. No browser screenshot or production browser mutation flow was claimed; component/unit tests cover delivery filters and the shared schema covers signed reassign previews. Invoice customer/payment data comes from the order-detail endpoint; restaurant name and refund line items are unavailable in documented wire responses, so the UI displays `restaurant_id` and an immutable-invoice refund note without inventing fields.
+
 ## H030: Shared reassign preview wire prerequisite
 
 - Date: 2026-11-05; agent/tool: Codex; branch/base: feat/phase-five / 501f4a2. Status: implemented, uncommitted; separate approval required before the 5c web commit.

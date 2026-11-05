@@ -11,6 +11,7 @@ import {
   Sun,
   UserRound,
   UtensilsCrossed,
+  Truck,
 } from 'lucide-react';
 import { authStore } from '../lib/api/auth-store.js';
 import { useLive } from '../lib/live/live-context.js';
@@ -63,6 +64,10 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
       <NavLink to="/orders" className="nav-item" onClick={onNavigate}>
         <UtensilsCrossed size={18} aria-hidden="true" />
         Orders
+      </NavLink>
+      <NavLink to="/deliveries" className="nav-item" onClick={onNavigate}>
+        <Truck size={18} aria-hidden="true" />
+        Deliveries
       </NavLink>
     </nav>
   );

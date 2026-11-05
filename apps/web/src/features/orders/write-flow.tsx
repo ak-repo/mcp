@@ -34,7 +34,10 @@ export function WriteFlow({ orderId, input, onSuccess, onCancel }: Props) {
     try {
       const value = await previewOrder(orderId, currentInput);
       setPreview(value as unknown as Record<string, unknown>);
-      token.current = value.confirmation_token;
+      token.current =
+        'confirmation_token' in value && typeof value.confirmation_token === 'string'
+          ? value.confirmation_token
+          : undefined;
       setState('previewed');
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : 'Preview could not be loaded.');
@@ -97,6 +100,9 @@ export function WriteFlow({ orderId, input, onSuccess, onCancel }: Props) {
                 </div>
               ))}
           </dl>
+        )}
+        {input.operation === 'reassign' && (
+          <p className="muted">Only available partners can be selected.</p>
         )}
         {message && (
           <p role="status" className="mt-3 muted">
