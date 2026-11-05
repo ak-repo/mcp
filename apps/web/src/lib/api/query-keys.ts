@@ -16,6 +16,8 @@ export const queryKeys = {
   deliveries: () => ['server', 'deliveries'] as const,
   partners: () => ['server', 'partners'] as const,
   metrics: () => ['server', 'metrics'] as const,
+  metricsSummary: (filters: Readonly<Record<string, unknown>>) =>
+    ['server', 'metrics', 'summary', filtered(filters)] as const,
   restaurants: () => ['server', 'restaurants'] as const,
   menu: (id: string) => ['server', 'menus', id] as const,
   mcpCalls: () => ['server', 'mcp', 'calls'] as const,

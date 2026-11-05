@@ -1362,6 +1362,7 @@ Commit message: "docs(api): clarify LLM base URL default and key handling".
   > Add the shared schemas first, then implement 5a.
   >
   > PREREQUISITE (separate change, separate commit): in packages/shared only (plus its tests and docs/change-history.md), add browser-safe Zod wire schemas and export them from index.ts:
+  >
   > - MeResponseSchema {actor:"ops", auth:"bearer"}, ReadyResponseSchema {status:"ready"}, StreamTicketResponseSchema {ticket, expires_at}
   > - ApiErrorEnvelopeSchema {error:{code, message, hint}} where code accepts every ErrorCode value plus "UNAUTHORIZED" and "FORBIDDEN" (do NOT add those two to the ErrorCode enum used by core/MCP)
   > - LiveChangeEventSchema {id, type, order_id (nullable), entity, at} for order.updated, delivery.updated, partner.updated, payment.updated, invoice.updated (refund changes arrive as payment.updated with entity "refund"), and McpCallEventSchema {tool, status, error_code (nullable), latency_ms, at} with NO rowid
@@ -1370,7 +1371,7 @@ Commit message: "docs(api): clarify LLM base URL default and key handling".
   > - Do NOT change apps/api, apps/mcp-server, packages/core, endpoints, or any existing shared export's behavior
   > - Run: pnpm --filter @foodops/shared typecheck/lint/test/build, then the root gates
   > - Prepare commit "feat(shared): add web wire schemas", follow the GIT RULES, STOP for "commit approved"
-  > After I approve that commit, continue with Task 5a unchanged, now using these schemas. Also approved: root pnpm-lock.yaml and eslint.config.js changes needed for 5a, and Tailwind 4 via @tailwindcss/postcss as planned.
+  >   After I approve that commit, continue with Task 5a unchanged, now using these schemas. Also approved: root pnpm-lock.yaml and eslint.config.js changes needed for 5a, and Tailwind 4 via @tailwindcss/postcss as planned.
 
 - Scope: additive shared wire contracts, public exports, colocated tests and this audit entry only. Task 5a remains pending until this prerequisite's separate commit approval. No migration, endpoint, dependency or existing-export behavior changes planned.
 - Inspection: verified the documented wire shapes against API stream route, ticket generator, change-feed mapping, auth and HTTP error mapper; MCP feed omits internal rowid. Verification pending.
@@ -1444,6 +1445,7 @@ Commit message: "feat(web): app shell, auth, api client and live updates".
 - Final source/config formatting checks and git diff --check passed. Input boundaries received a dedicated control-border token; measured contrast against the input surface is 3.56 in light and 4.14 in dark, satisfying the 3:1 non-text requirement. The final complete gate sequence above includes that last CSS adjustment. No implementation work remains for this task.
 - Verification limits: no real LLM, domain-write or simulator browser scenario was run; those are outside 5a's UI scope. Browser checks used the real API/MCP and temporary data as recorded above. Resume/gap/visibility/rate-limit scenarios were exercised with fake streams/timers, with existing real-backend stream tests passing in the root gate. No claim of a full formal accessibility audit; keyboard behavior, focus, reduced-motion styles, responsive screenshots and the listed token contrasts were checked.
 - Prepared scope is only apps/web plus approved pnpm-lock.yaml, eslint.config.js, docs/architecture/folder-structure.md and this audit trail. Proposed commit message: `feat(web): app shell, auth, api client and live updates`. Show explicit staged-file list, git status --short and diff summary, then stop for the user's specific “commit approved”. No commit, remote or branch operation has been performed for H026.
+
 ## H027: Phase 5b preview-token wire prerequisite
 
 - Date: 2026-11-05; agent/tool: Codex; branch/base: feat/phase-five / b529cdf. Status: in progress, uncommitted.
@@ -1452,3 +1454,12 @@ Commit message: "feat(web): app shell, auth, api client and live updates".
 - Added colocated tests covering API-shaped signed previews, unknown-field rejection, wrong token types, and invalid timestamps. No API, MCP, core, endpoint, or response-field changes were made.
 - Verification and commit approval are pending. Proposed separate commit: `feat(shared): add preview token wire schemas`.
 
+## H028: Phase 5b overview and orders implementation
+
+- Date: 2026-11-05; agent/tool: Codex; branch/base: feat/phase-five / 293a558. Status: in progress, uncommitted.
+- Exact relevant authorization: “Implement the plan.” 5b adds overview analytics, orders table/board, order drawer, refund input and preview-confirm write flow while reusing the committed 5a modules.
+- Implemented overview and orders routes, shared-schema API calls, safe response-header access for idempotency replay, lazy Recharts charts, URL-backed filters, order details drawer, signed write flow, refund dialog, query-key extensions, styling, tests and documentation. No API, MCP, core, endpoint or response-field changes were made.
+- Explicit deviation: quick-action visibility uses a web-local next-status hint map; the server remains authoritative and every action uses preview. Invoice remains disabled text until 5c.
+- Verification completed; the proposed `feat(web): overview and orders with preview-confirm write flow` commit checkpoint is ready.
+- Final verification: web typecheck, lint, test (57/57 across nine files) and build passed. Root `pnpm typecheck && pnpm build && pnpm lint && pnpm test` passed: shared 93, core 272, MCP 144, API 404 and web 57 tests. Prettier check and `git diff --check` passed.
+- Real API verification used an isolated seeded database at `/tmp/foodops-5b-live-cwbcDD/demo.sqlite`. Exact server command: `DB_PATH=/tmp/foodops-5b-live-cwbcDD/demo.sqlite API_HOST=127.0.0.1 API_PORT=3302 WEB_ORIGIN=http://127.0.0.1:5173 LOG_LEVEL=silent pnpm start:api` with generated in-memory bearer/confirmation secrets. Curl checks confirmed readiness, signed cancel preview/execute for assigned order `O-0194` released partner `DP-0001` to `available`, advance preview/execute for `O-0192` moved `placed` to `accepted`, and refund preview/execute for delivered `O-0187` produced a ₹1.00 partial refund. MCP and web servers were not needed for these direct API checks; no browser workflow or real 5b UI mutation was claimed.

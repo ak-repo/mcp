@@ -25,7 +25,7 @@ Dependency direction: **apps → packages; core → shared**. Applications never
 │       ├── src/
 │       │   ├── app/
 │       │   ├── lib/{api,live}/
-│       │   ├── features/{auth,system}/
+│       │   ├── features/{auth,system,overview,orders}/
 │       │   ├── components/{ui,common}/
 │       │   ├── styles/
 │       │   ├── test/
@@ -57,4 +57,4 @@ Tests are colocated or under package test directories; build output is ignored d
 
 Use Node 22 and pnpm 10. Root build compiles shared → core → backend apps through tsc -b, then runs the independent web build. Web uses Bundler resolution and noEmit and stays outside backend project references. It consumes built shared exports; its dev/typecheck/test scripts build shared first. Root typecheck/test recurse across packages, while root lint applies browser/React rules to web and backend rules elsewhere.
 
-Web uses feature folders for auth and System status; app owns routing/providers/shell, lib/api owns schema-validated HTTP and memory-only auth, and lib/live owns fetch SSE and batched cache invalidation. UI primitives live in components/ui and shared presentation in components/common. Tailwind 4 uses PostCSS; external public/theme-init.js applies non-secret preferences before React. Only login, System status and 404 routes exist. Browser requests go through the API; database, MCP and LLM access remain server-side.
+Web uses feature folders for auth, System status, overview and orders; app owns routing/providers/shell, lib/api owns schema-validated HTTP and memory-only auth, and lib/live owns fetch SSE and batched cache invalidation. UI primitives live in components/ui and shared presentation in components/common. Tailwind 4 uses PostCSS; external public/theme-init.js applies non-secret preferences before React. Domain routes are overview, orders and deep-linked order details; invoice remains intentionally unregistered until 5c. Browser requests go through the API; database, MCP and LLM access remain server-side.

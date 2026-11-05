@@ -56,6 +56,14 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
         <Activity size={18} aria-hidden="true" />
         System status
       </NavLink>
+      <NavLink to="/overview" className="nav-item" onClick={onNavigate}>
+        <Activity size={18} aria-hidden="true" />
+        Overview
+      </NavLink>
+      <NavLink to="/orders" className="nav-item" onClick={onNavigate}>
+        <UtensilsCrossed size={18} aria-hidden="true" />
+        Orders
+      </NavLink>
     </nav>
   );
 }
@@ -113,7 +121,7 @@ export function Shell() {
           <div className="breadcrumb">
             <span>Workspace</span>
             <span aria-hidden="true">/</span>
-            <strong>System status</strong>
+            <strong>Workspace</strong>
           </div>
           <div className="topbar-actions">
             <div role="status" aria-live="polite" className="live-indicator" title={live.message}>
@@ -251,6 +259,24 @@ export function Shell() {
                 >
                   <Activity size={18} aria-hidden="true" />
                   System status
+                </CommandItem>
+                <CommandItem
+                  onSelect={() => {
+                    setCommand(false);
+                    void navigate('/overview');
+                  }}
+                >
+                  <Activity size={18} aria-hidden="true" />
+                  Overview
+                </CommandItem>
+                <CommandItem
+                  onSelect={() => {
+                    setCommand(false);
+                    void navigate('/orders');
+                  }}
+                >
+                  <UtensilsCrossed size={18} aria-hidden="true" />
+                  Orders
                 </CommandItem>
               </CommandGroup>
             </CommandList>

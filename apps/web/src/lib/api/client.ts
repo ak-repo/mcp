@@ -16,6 +16,11 @@ export interface ApiOptions {
   token?: string;
 }
 
+export interface ApiResponse<T> {
+  data: T;
+  headers: Headers;
+}
+
 export function createApiClient(options: {
   origin: string;
   fetch?: typeof fetch;
@@ -71,6 +76,14 @@ export function createApiClient(options: {
     schema: ResponseSchema<T>,
     init: ApiOptions = {},
   ): Promise<T> {
+    const result = await apiFetchWithMeta(path, schema, init);
+    return result.data;
+  }
+  async function apiFetchWithMeta<T>(
+    path: string,
+    schema: ResponseSchema<T>,
+    init: ApiOptions = {},
+  ): Promise<ApiResponse<T>> {
     const target = url(path);
     const generation = store.getSnapshot().generation;
     const token = init.auth === false ? null : (init.token ?? store.getToken());
@@ -106,7 +119,7 @@ export function createApiClient(options: {
       }
       const parsed = schema.safeParse(value);
       if (!parsed.success) throw new ContractError();
-      return parsed.data;
+      return { data: parsed.data, headers: response.headers };
     } catch (error) {
       if (init.signal?.aborted) throw new DOMException('Request cancelled.', 'AbortError');
       if (timedOut) throw new TimeoutError();
@@ -133,10 +146,11 @@ export function createApiClient(options: {
       throw new ContractError();
     return response.body;
   }
-  return { apiFetch, openStream };
+  return { apiFetch, apiFetchWithMeta, openStream };
 }
 
 export const api = createApiClient({
   origin: import.meta.env.VITE_API_BASE_URL || window.location.origin,
 });
 export const apiFetch = api.apiFetch;
+export const apiFetchWithMeta = api.apiFetchWithMeta;

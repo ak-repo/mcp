@@ -1,6 +1,6 @@
 # FoodOps Web
 
-React 18 operations console. Task 5a provides login, a responsive shell and a functional System status page; future domain pages are not registered. The browser calls only the REST/SSE API. Contracts come from `@foodops/shared` and [docs/api.md](../../docs/api.md).
+React 18 operations console. The app includes login, a responsive shell, System status, Overview analytics, Orders table/board, order details and preview-confirm writes. The browser calls only the REST/SSE API. Contracts come from `@foodops/shared` and [docs/api.md](../../docs/api.md).
 
 ## Run and verify
 
@@ -37,11 +37,11 @@ API `WEB_ORIGIN` must include the exact web origin, including scheme, hostname a
 - `app/`: provider composition, route definitions, shell and route error handling.
 - `lib/api/`: memory-only auth store, schema-validating fetch client, safe errors and hierarchical query keys.
 - `lib/live/`: bounded fetch SSE reader, connection lifecycle, typed subscriptions and one-second invalidation batching.
-- `features/auth/` and `features/system/`: login and System status behavior.
+- `features/auth/`, `features/system/`, `features/overview/` and `features/orders/`: authentication, readiness, metrics, order browsing and signed write flows.
 - `components/ui/`: locally authored shadcn-style components using pinned Radix primitives, cmdk and Sonner. `components/common/`: page header, status badges and asynchronous states.
 - `styles/`: Tailwind 4 through PostCSS and CSS-variable light/dark tokens. `lib/status-config.ts` centralizes order labels, token names and icons.
 
-Tests are colocated. Vitest uses jsdom, Testing Library, injected fetch and fake readable streams; MSW is not required. The external theme initializer is tested as the actual script source. UI primitives exist for subsequent pages, but no future-page navigation or API requests are added.
+Tests are colocated. Vitest uses jsdom, Testing Library, injected fetch and fake readable streams; MSW is not required. The external theme initializer is tested as the actual script source. Recharts is pinned and lazy-loaded for Overview charts. Preview tokens remain component-memory-only; execute requests use a stable idempotency key and read the exposed `Idempotency-Replayed` header. Invoice is intentionally disabled until 5c.
 
 ## Authentication, requests and errors
 

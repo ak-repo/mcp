@@ -22,6 +22,24 @@ export function createAppRouter() {
                 Component: (await import('../features/system/system-page.js')).SystemPage,
               }),
             },
+            {
+              path: '/overview',
+              lazy: async () => ({
+                Component: (await import('../features/overview/overview-page.js')).OverviewPage,
+              }),
+            },
+            {
+              path: '/orders',
+              lazy: async () => ({
+                Component: (await import('../features/orders/orders-page.js')).OrdersPage,
+              }),
+            },
+            {
+              path: '/orders/:id',
+              lazy: async () => ({
+                Component: (await import('../features/orders/orders-page.js')).OrdersPage,
+              }),
+            },
           ],
         },
       ],
