@@ -49,18 +49,27 @@ SIGINT/SIGTERM stop new work and drain requests/output before closing DB handles
 
 ## Environment
 
+If startup reports that a port is already in use, inspect its listener with
+`ss -ltnp '( sport = :3001 or sport = :3002 )'`. Reuse a healthy existing FoodOps
+process or stop it from its original terminal before restarting. Another project may
+also occupy the default MCP port. To use port 3101 instead, set `PORT=3101` for MCP,
+set `MCP_URL=http://127.0.0.1:3101/mcp` for the API, and update any explicit
+`ALLOWED_HOSTS` to include `127.0.0.1:3101,localhost:3101`. Restart the API to pick up
+its changed URL. Check existing API health with `/api/health` and `/api/ready` on
+port 3002 before launching a second API instance.
+
 Process values override the workspace `.env`.
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `DB_PATH` | `./data/foodops.sqlite` | Initialized SQLite file; relative to workspace root. |
-| `MCP_HOST` | `127.0.0.1` | HTTP bind address; non-loopback access also needs an explicit allowlist. |
-| `PORT` | `3001` | HTTP port, integer 1–65535. |
-| `MCP_PORT` | unset | Legacy port fallback when `PORT` is absent. |
-| `ALLOWED_HOSTS` | loopback at `PORT` | Comma-separated `host:port` authorities for request Host and Origin. Defaults: `127.0.0.1`, `localhost`, `[::1]` with the listener port. No URLs or wildcards. |
-| `MCP_AUTH_TOKEN` | unset | Required for HTTP: at least 32 characters without whitespace. Stdio is trusted locally. |
-| `MCP_CONFIRM_SECRET` | random per process | Optional shared HMAC secret, at least 32 characters without surrounding whitespace; sharing supports multiple processes, rotation invalidates tokens. |
-| `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`. |
+| Variable             | Default                 | Meaning                                                                                                                                                        |
+| -------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DB_PATH`            | `./data/foodops.sqlite` | Initialized SQLite file; relative to workspace root.                                                                                                           |
+| `MCP_HOST`           | `127.0.0.1`             | HTTP bind address; non-loopback access also needs an explicit allowlist.                                                                                       |
+| `PORT`               | `3001`                  | HTTP port, integer 1–65535.                                                                                                                                    |
+| `MCP_PORT`           | unset                   | Legacy port fallback when `PORT` is absent.                                                                                                                    |
+| `ALLOWED_HOSTS`      | loopback at `PORT`      | Comma-separated `host:port` authorities for request Host and Origin. Defaults: `127.0.0.1`, `localhost`, `[::1]` with the listener port. No URLs or wildcards. |
+| `MCP_AUTH_TOKEN`     | unset                   | Required for HTTP: at least 32 characters without whitespace. Stdio is trusted locally.                                                                        |
+| `MCP_CONFIRM_SECRET` | random per process      | Optional shared HMAC secret, at least 32 characters without surrounding whitespace; sharing supports multiple processes, rotation invalidates tokens.          |
+| `LOG_LEVEL`          | `info`                  | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                                                                               |
 
 Select the transport with its entrypoint; `MCP_TRANSPORT` is removed. Process values override `.env`, including legacy port precedence. The seed CLI's `DATABASE_PATH` compatibility alias and the migration CLI's override are separate from server configuration.
 
@@ -70,20 +79,20 @@ Each request gets a generated `request_id`. HTTP accepts a bounded `X-Run-Id` an
 
 All inputs reject unknown fields. List tools support `cursor`/`limit` (default 20, maximum 50). Money is integer paise plus formatted INR `*_display` fields.
 
-| Tool                     | Inputs                                                             | Returns                                                                         |
-| ------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `search_restaurants`     | query?, cuisine?, area?, open_now?, cursor?, limit?                | Restaurant page.                                                                |
-| `get_menu`               | restaurant_id, veg_only?, available_only?, cursor?, limit?         | Menu page and prices.                                                           |
-| `get_order`              | order_id                                                           | Order, items, customer/address, payment, delivery, timeline.                    |
-| `list_orders`            | status?, customer_id?, restaurant_id?, from?, to?, cursor?, limit? | Newest-first order page.                                                        |
-| `get_invoice`            | order_id                                                           | Immutable invoice and original line items.                                      |
-| `track_delivery`         | order_id                                                           | Assignment, status, ETA, timestamps, lateness.                                  |
-| `list_delivery_partners` | status?, cursor?, limit?                                           | Partner page.                                                                   |
-| `get_sales_summary`      | from, to, group_by (`day`/`restaurant`/`status`)                   | Orders, delivered GMV/AOV before refunds, cancellation fraction, delivery time. |
-| `advance_order_status`   | order_id, to_status, reason?, action?, confirmation_token?, idempotency_key?           | Transition preview or committed effects.                                        |
-| `cancel_order`           | order_id, reason, action?, confirmation_token?, idempotency_key?                       | Cancellation preview or atomic cancellation/refund.                             |
-| `reassign_delivery`      | order_id, partner_id, reason, action?, confirmation_token?, idempotency_key?           | Assignment preview or changed delivery/partners.                                |
-| `issue_refund`           | order_id, amount_paise, reason, action?, confirmation_token?, idempotency_key?         | Balance preview or payment/refund records.                                      |
+| Tool                     | Inputs                                                                         | Returns                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `search_restaurants`     | query?, cuisine?, area?, open_now?, cursor?, limit?                            | Restaurant page.                                                                |
+| `get_menu`               | restaurant_id, veg_only?, available_only?, cursor?, limit?                     | Menu page and prices.                                                           |
+| `get_order`              | order_id                                                                       | Order, items, customer/address, payment, delivery, timeline.                    |
+| `list_orders`            | status?, customer_id?, restaurant_id?, from?, to?, cursor?, limit?             | Newest-first order page.                                                        |
+| `get_invoice`            | order_id                                                                       | Immutable invoice and original line items.                                      |
+| `track_delivery`         | order_id                                                                       | Assignment, status, ETA, timestamps, lateness.                                  |
+| `list_delivery_partners` | status?, cursor?, limit?                                                       | Partner page.                                                                   |
+| `get_sales_summary`      | from, to, group_by (`day`/`restaurant`/`status`)                               | Orders, delivered GMV/AOV before refunds, cancellation fraction, delivery time. |
+| `advance_order_status`   | order_id, to_status, reason?, action?, confirmation_token?, idempotency_key?   | Transition preview or committed effects.                                        |
+| `cancel_order`           | order_id, reason, action?, confirmation_token?, idempotency_key?               | Cancellation preview or atomic cancellation/refund.                             |
+| `reassign_delivery`      | order_id, partner_id, reason, action?, confirmation_token?, idempotency_key?   | Assignment preview or changed delivery/partners.                                |
+| `issue_refund`           | order_id, amount_paise, reason, action?, confirmation_token?, idempotency_key? | Balance preview or payment/refund records.                                      |
 
 Successful results contain a short text summary and `structuredContent: { data, truncated: false }`. Results exceeding 20 KiB use `{ data: null, truncated: true, hint }`; narrow filters or reduce the page size. Reads have a 5-second deadline. Writes reject cancellation before execution, then await completion and preserve the committed result even if they exceed five seconds or the client cancels. Synchronous SQLite cannot be interrupted by a JavaScript timer. Audit persistence is best-effort; failures go to stderr without replacing the tool result.
 
@@ -170,7 +179,6 @@ pnpm lint
 ```
 
 Build precedes process tests, which execute the compiled entrypoints. Tests use temporary seeded SQLite files, actual child processes and loopback HTTP listeners, SDK clients, contract snapshots, and a preview/confirm/replay flow that inspects events and audit rows. They also test body limits, auth, concurrent reused RPC IDs, backpressure, clean signals/EOF, forced drain cleanup, and credential-free correlated logs.
-
 
 ## Review verification
 

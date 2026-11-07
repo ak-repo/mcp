@@ -222,3 +222,25 @@ it('fails HTTP startup when no token is configured', async () => {
   expect(process.stdout()).toBe('');
   expect(process.stderr()).toContain('MCP_AUTH_TOKEN');
 });
+
+it('reports an occupied HTTP port without leaking credentials or writing stdout', async () => {
+  const reservation = createServer();
+  reservation.listen(0, '127.0.0.1');
+  await once(reservation, 'listening');
+  try {
+    const address = reservation.address();
+    if (!address || typeof address === 'string') throw new Error('Missing port');
+    const process = launch('transports/http.js', {
+      PORT: String(address.port),
+      MCP_HOST: '127.0.0.1',
+    });
+    expect((await process.exited)[0]).toBe(1);
+    expect(process.stdout()).toBe('');
+    expect(process.stderr()).toContain(`MCP HTTP port ${address.port} is already in use`);
+    expect(process.stderr()).toContain('set PORT to a free port');
+    expect(process.stderr()).toContain('MCP_URL');
+    expect(process.stderr()).not.toContain(TOKEN);
+  } finally {
+    await new Promise<void>((resolve) => reservation.close(() => resolve()));
+  }
+});

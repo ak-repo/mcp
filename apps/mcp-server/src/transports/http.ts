@@ -316,6 +316,13 @@ export async function startHttp(options: HttpOptions): Promise<HttpApplication> 
     server.close();
     runtime.close();
     uninstall();
+    if (error instanceof Error && 'code' in error && error.code === 'EADDRINUSE') {
+      throw new AppError(
+        ErrorCode.INTERNAL,
+        `MCP HTTP port ${options.port ?? options.config.PORT} is already in use`,
+        'Stop the existing listener or set PORT to a free port; update MCP_URL in the API and ALLOWED_HOSTS when using a custom port',
+      );
+    }
     throw error;
   }
 }
