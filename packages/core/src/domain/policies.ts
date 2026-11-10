@@ -93,7 +93,13 @@ export function requiresRefundConfirmation(amount: number): boolean {
   return validMoney(amount) > LARGE_REFUND_PAISE;
 }
 export function assertReassignment(status: OrderStatus, partner: PartnerStatus): void {
-  assertCancellation(status);
+  if (!CANCELLATION_ALLOWED_STATUSES.includes(status)) {
+    throw new AppError(
+      ErrorCode.INVALID_TRANSITION,
+      `Cannot reassign delivery for an order in ${status}`,
+      'Reassignment is allowed only before pickup',
+    );
+  }
   if (partner !== REASSIGNMENT_PARTNER_STATUS) {
     throw new AppError(
       ErrorCode.CONFLICT,

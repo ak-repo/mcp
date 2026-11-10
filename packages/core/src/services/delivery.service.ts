@@ -53,7 +53,10 @@ function reassignPlan(repos: Repositories, input: ReassignInput) {
     delivery.partner_id === null
       ? null
       : required(repos.delivery.partner(delivery.partner_id), 'Previous partner');
-  return { order, delivery, partner, previous };
+  // The previous partner is released only when no other delivery still holds them.
+  const releasePrevious =
+    previous !== null && repos.delivery.activeForPartner(previous.id, delivery.id).length === 0;
+  return { order, delivery, partner, previous, releasePrevious };
 }
 export function decodeReassign(value: unknown): ReassignResult {
   const row = object(value);
@@ -95,10 +98,13 @@ export function planDeliveryAdvance(repos: Repositories, order: Order, at: strin
   if (!['picked_up', 'out_for_delivery', 'delivered'].includes(order.status))
     return { delivery, changes: false, releasePartner: null };
   const current = required(delivery, 'Delivery');
-  const partner = required(
-    current.partner_id === null ? null : repos.delivery.partner(current.partner_id),
-    'Assigned partner',
-  );
+  if (current.partner_id === null)
+    throw new AppError(
+      ErrorCode.CONFLICT,
+      'No delivery partner is assigned',
+      'Reassign an available partner before advancing to picked_up',
+    );
+  const partner = required(repos.delivery.partner(current.partner_id), 'Assigned partner');
   const expected =
     order.status === 'picked_up'
       ? 'assigned'
@@ -137,13 +143,17 @@ export function advanceDelivery(repos: Repositories, order: Order, at: string): 
   return plan.delivery;
 }
 function reassignPreview(repos: Repositories, input: ReassignInput) {
-  const { order, delivery, partner, previous } = reassignPlan(repos, input);
+  const { order, delivery, partner, previous, releasePrevious } = reassignPlan(repos, input);
   return {
     order_id: order.id,
     delivery_id: delivery.id,
     previous_partner_id: previous?.id ?? null,
     partner_id: partner.id,
-    previous_partner_status_after: previous ? 'available' : null,
+    previous_partner_status_after: previous
+      ? releasePrevious
+        ? 'available'
+        : previous.status
+      : null,
     partner_status_after: 'busy',
     delivery_status_after: 'assigned',
     refund_amount_paise: 0,
@@ -193,19 +203,21 @@ export function createDeliveryService(context: ServiceContext) {
           () => reassignPreview(repos, input),
           options?.expectedPreviewHash,
         );
-        const { order, delivery, partner, previous } = reassignPlan(repos, input);
+        const { order, delivery, partner, previous, releasePrevious } = reassignPlan(repos, input);
         const updated = DeliverySchema.parse({
           ...delivery,
           partner_id: partner.id,
           status: 'assigned',
           eta_min: delivery.eta_min ?? DEFAULT_DELIVERY_ETA_MIN,
-          assigned_at: now(),
+          assigned_at: delivery.assigned_at ?? now(),
         });
         const available = previous
-          ? DeliveryPartnerSchema.parse({ ...previous, status: 'available' })
+          ? releasePrevious
+            ? DeliveryPartnerSchema.parse({ ...previous, status: 'available' })
+            : previous
           : null;
         const busy = DeliveryPartnerSchema.parse({ ...partner, status: 'busy' });
-        if (available) repos.delivery.updatePartner(available);
+        if (available && releasePrevious) repos.delivery.updatePartner(available);
         repos.delivery.updatePartner(busy);
         repos.delivery.update(updated);
         return {

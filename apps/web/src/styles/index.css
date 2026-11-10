@@ -1209,6 +1209,7 @@
 .assistant-toolbar { justify-content: space-between; margin-bottom: 1rem; }
 .provider-badge { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--muted); }
 .assistant-transcript { display: grid; gap: 0.75rem; margin-block: 1rem; }
+.chat-turn { display: grid; gap: 0.75rem; }
 .chat-message { display: flex; gap: 0.6rem; align-items: flex-start; }
 .chat-message p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .user-message { justify-content: flex-end; }
@@ -1222,3 +1223,10 @@
 .error-card.prominent { border-color: var(--cancelled-fg); background: color-mix(in srgb, var(--cancelled-bg) 35%, var(--surface)); }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.tool-catalog { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; }
+.tool-catalog-item { border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.75rem 1rem; }
+.tool-catalog-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.tool-catalog-item p { margin: 0.35rem 0; }
+.tool-catalog-item summary { cursor: pointer; }
+.tool-catalog-item pre { max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }

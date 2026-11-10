@@ -21,4 +21,6 @@ export const queryKeys = {
   restaurants: () => ['server', 'restaurants'] as const,
   menu: (id: string) => ['server', 'menus', id] as const,
   mcpCalls: () => ['server', 'mcp', 'calls'] as const,
+  mcpTools: () => ['server', 'mcp', 'tools'] as const,
+  mcpStatus: () => ['server', 'mcp', 'status'] as const,
 };

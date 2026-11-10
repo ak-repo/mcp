@@ -8,6 +8,7 @@ import { StatusBadge } from '../../components/common/status-badge.js';
 import { formatDate } from '../../lib/dates.js';
 import { WriteFlow } from './write-flow.js';
 import { RefundDialog } from './refund-dialog.js';
+import { paymentLabel } from './payment-label.js';
 import { useState } from 'react';
 import { Button } from '../../components/ui/button.js';
 import type { OrderStatus } from '@foodops/shared';
@@ -64,7 +65,7 @@ export function OrderDrawer({ orderId, onClose }: { orderId: string; onClose: ()
             ))}
             <h3>Payment & delivery</h3>
             <p>
-              {detail.data.payment?.status ?? 'No payment'} ·{' '}
+              {paymentLabel(detail.data.payment, detail.data.order.status)} ·{' '}
               {detail.data.delivery?.status ?? 'No delivery'}
             </p>
             <p>Partner ID: {detail.data.delivery?.partner_id ?? '—'}</p>

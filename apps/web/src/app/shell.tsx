@@ -13,6 +13,7 @@ import {
   UtensilsCrossed,
   Truck,
   Bot,
+  Wrench,
 } from 'lucide-react';
 import { authStore } from '../lib/api/auth-store.js';
 import { useLive } from '../lib/live/live-context.js';
@@ -73,6 +74,10 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
       <NavLink to="/assistant" className="nav-item" onClick={onNavigate}>
         <Bot size={18} aria-hidden="true" />
         Assistant
+      </NavLink>
+      <NavLink to="/inspector" className="nav-item" onClick={onNavigate}>
+        <Wrench size={18} aria-hidden="true" />
+        MCP Inspector
       </NavLink>
     </nav>
   );
@@ -288,9 +293,23 @@ export function Shell() {
                   <UtensilsCrossed size={18} aria-hidden="true" />
                   Orders
                 </CommandItem>
-                <CommandItem onSelect={() => { setCommand(false); void navigate('/assistant'); }}>
+                <CommandItem
+                  onSelect={() => {
+                    setCommand(false);
+                    void navigate('/assistant');
+                  }}
+                >
                   <Bot size={18} aria-hidden="true" />
                   Assistant
+                </CommandItem>
+                <CommandItem
+                  onSelect={() => {
+                    setCommand(false);
+                    void navigate('/inspector');
+                  }}
+                >
+                  <Wrench size={18} aria-hidden="true" />
+                  MCP Inspector
                 </CommandItem>
               </CommandGroup>
             </CommandList>

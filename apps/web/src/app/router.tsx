@@ -60,6 +60,12 @@ export function createAppRouter() {
               }),
             },
             {
+              path: '/inspector',
+              lazy: async () => ({
+                Component: (await import('../features/inspector/inspector-page.js')).InspectorPage,
+              }),
+            },
+            {
               path: '/settings',
               lazy: async () => ({
                 Component: (await import('../features/settings/settings-page.js')).SettingsPage,

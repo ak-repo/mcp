@@ -1,6 +1,7 @@
 import type { AgentEvent, ApprovalDecision } from '@foodops/shared';
 
-export type RunState = 'idle' | 'streaming' | 'awaiting_approval' | 'completed' | 'error' | 'cancelled';
+export type RunState =
+  'idle' | 'streaming' | 'awaiting_approval' | 'completed' | 'error' | 'cancelled';
 export type ToolView = {
   callId: string;
   name: string;
@@ -28,7 +29,11 @@ export type RunModel = {
   error?: { kind: string; message: string; retryable: boolean };
 };
 export const initialRun: RunModel = {
-  state: 'idle', text: '', thinking: '', tools: {}, approvedWrite: false,
+  state: 'idle',
+  text: '',
+  thinking: '',
+  tools: {},
+  approvedWrite: false,
 };
 
 export type Action =
@@ -44,7 +49,11 @@ export function runReducer(model: RunModel, action: Action): RunModel {
   if (action.type === 'connection_lost')
     return model.state === 'completed' || model.state === 'cancelled'
       ? model
-      : { ...model, state: 'error', error: { kind: 'connection_lost', message: 'Connection lost.', retryable: true } };
+      : {
+          ...model,
+          state: 'error',
+          error: { kind: 'connection_lost', message: 'Connection lost.', retryable: true },
+        };
   if (action.type === 'approval_sent') {
     if (!model.approval) return model;
     return {
@@ -52,22 +61,91 @@ export function runReducer(model: RunModel, action: Action): RunModel {
       state: action.decision === 'approved' ? 'streaming' : 'awaiting_approval',
       approvedWrite: model.approvedWrite || action.decision === 'approved',
       approval: { ...model.approval, resolved: action.decision },
-      tools: { ...model.tools, [model.approval.call_id]: { ...model.tools[model.approval.call_id]!, status: action.decision === 'approved' ? 'running' : 'rejected' } },
+      tools: {
+        ...model.tools,
+        [model.approval.call_id]: {
+          ...model.tools[model.approval.call_id]!,
+          status: action.decision === 'approved' ? 'running' : 'rejected',
+        },
+      },
     };
   }
   const event = action.event;
   switch (event.type) {
-    case 'run.started': return { ...model, runId: event.run_id, sessionId: event.session_id, provider: event.provider, model: event.model, state: 'streaming' };
-    case 'text.delta': return { ...model, text: model.text + event.text };
-    case 'thinking.delta': return { ...model, thinking: model.thinking + event.text };
-    case 'tool.call': return { ...model, tools: { ...model.tools, [event.call_id]: { callId: event.call_id, name: event.name, kind: event.kind, arguments: event.arguments, status: event.kind === 'write' ? 'awaiting_approval' : 'running' } } };
-    case 'approval.required': return { ...model, state: 'awaiting_approval', approval: { ...event, resolved: undefined } };
+    case 'run.started':
+      return {
+        ...model,
+        runId: event.run_id,
+        sessionId: event.session_id,
+        provider: event.provider,
+        model: event.model,
+        state: 'streaming',
+      };
+    case 'text.delta':
+      return { ...model, text: model.text + event.text };
+    case 'thinking.delta':
+      return { ...model, thinking: model.thinking + event.text };
+    case 'tool.call':
+      return {
+        ...model,
+        tools: {
+          ...model.tools,
+          [event.call_id]: {
+            callId: event.call_id,
+            name: event.name,
+            kind: event.kind,
+            arguments: event.arguments,
+            status: event.kind === 'write' ? 'awaiting_approval' : 'running',
+          },
+        },
+      };
+    case 'approval.required':
+      return { ...model, state: 'awaiting_approval', approval: { ...event, resolved: undefined } };
     case 'approval.resolved':
       return model.approval?.call_id === event.call_id
         ? { ...model, approval: { ...model.approval, resolved: event.decision } }
         : model;
-    case 'tool.result': return { ...model, tools: { ...model.tools, [event.call_id]: { ...model.tools[event.call_id]!, status: event.status, latencyMs: event.latency_ms, summary: event.summary, truncated: event.truncated } } };
-    case 'run.completed': return { ...model, state: 'completed' };
-    case 'run.error': return { ...model, state: 'error', error: event };
+    case 'tool.result':
+      return {
+        ...model,
+        tools: {
+          ...model.tools,
+          [event.call_id]: {
+            ...model.tools[event.call_id]!,
+            status: event.status,
+            latencyMs: event.latency_ms,
+            summary: event.summary,
+            truncated: event.truncated,
+          },
+        },
+      };
+    case 'run.completed':
+      return { ...model, state: 'completed' };
+    case 'run.error':
+      return { ...model, state: 'error', error: event };
+  }
+}
+
+/** A finished (or abandoned) exchange kept above the current turn; always rendered read-only. */
+export type Turn = { userMessage: string; run: RunModel };
+
+/** Archive the current turn when a new send starts; a turn that never had a message is dropped. */
+export function archiveTurn(turns: readonly Turn[], userMessage: string, run: RunModel): Turn[] {
+  return userMessage ? [...turns, { userMessage, run }] : [...turns];
+}
+
+/** Short, state-change-only announcement for assistive technology; streaming deltas never change it. */
+export function runAnnouncement(state: RunState): string {
+  switch (state) {
+    case 'streaming':
+      return 'Assistant is responding';
+    case 'awaiting_approval':
+      return 'Approval required';
+    case 'completed':
+      return 'Run completed';
+    case 'error':
+      return 'Run failed';
+    default:
+      return '';
   }
 }

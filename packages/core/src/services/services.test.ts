@@ -3,7 +3,7 @@ import { AppError, ErrorCode, OrderStatusSchema } from '@foodops/shared';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { createServices } from './index.js';
-import { AT, fixture, type Fixture } from './test-helpers.js';
+import { AT, PLACED_AT, fixture, type Fixture } from './test-helpers.js';
 
 let f: Fixture;
 const meta = { actor: 'ops', reason: 'Operations request' } as const;
@@ -290,7 +290,7 @@ describe('delivery lifecycle', () => {
     expect(first.partner.status).toBe('busy');
     expect(first.delivery).toMatchObject({
       partner_id: 'DP-2',
-      assigned_at: AT,
+      assigned_at: PLACED_AT,
       status: 'assigned',
     });
     expect(f.services.delivery.executeReassign(request)).toEqual(first);
@@ -301,6 +301,43 @@ describe('delivery lifecycle', () => {
     const result = f.services.order.advanceStatus({ ...call(orderId), toStatus: 'delivered' });
     expect(result.delivery).toMatchObject({ delivered_at: AT, status: 'delivered' });
     expect(f.services.delivery.trackDelivery(orderId).partner?.status).toBe('available');
+  });
+
+  it('keeps a late delivery late after reassignment but starts the clock on first assignment', () => {
+    const late = f.addOrder({ status: 'ready' });
+    expect(f.services.delivery.trackDelivery(late).is_late).toBe(true);
+    f.services.delivery.executeReassign({ ...call(late), partnerId: 'DP-2' });
+    const tracked = f.services.delivery.trackDelivery(late);
+    expect(tracked.delivery?.assigned_at).toBe(PLACED_AT);
+    expect(tracked.is_late).toBe(true);
+    f.write.prepare("UPDATE delivery_partners SET status = 'available' WHERE id = 'DP-2'").run();
+    const fresh = f.addOrder({ delivery: 'pending', partnerId: null });
+    f.services.delivery.executeReassign({ ...call(fresh), partnerId: 'DP-2' });
+    const first = f.services.delivery.trackDelivery(fresh);
+    expect(first.delivery?.assigned_at).toBe(AT);
+    expect(first.is_late).toBe(false);
+  });
+
+  it('releases the previous partner only when it has no other active delivery', () => {
+    const shared = f.addOrder({ status: 'ready' });
+    const other = f.addOrder({ status: 'ready' });
+    const preview = f.services.delivery.previewReassign({ ...call(shared), partnerId: 'DP-2' });
+    expect(preview.previous_partner_status_after).toBe('busy');
+    const result = f.services.delivery.executeReassign({ ...call(shared), partnerId: 'DP-2' });
+    expect(result.previous_partner?.status).toBe('busy');
+    expect(f.services.delivery.trackDelivery(other).partner?.status).toBe('busy');
+    // Free DP-2 completely, then reassign its only delivery away.
+    f.write.prepare("UPDATE deliveries SET status = 'cancelled' WHERE order_id = ?").run(shared);
+    f.write.prepare("UPDATE delivery_partners SET status = 'busy' WHERE id = 'DP-2'").run();
+    const sole = f.addOrder({ status: 'ready', delivery: 'assigned', partnerId: 'DP-2' });
+    f.write.prepare("UPDATE delivery_partners SET status = 'available' WHERE id = 'DP-1'").run();
+    f.write.prepare("UPDATE deliveries SET status = 'cancelled' WHERE order_id = ?").run(other);
+    const alone = f.services.delivery.previewReassign({ ...call(sole), partnerId: 'DP-1' });
+    expect(alone.previous_partner_status_after).toBe('available');
+    expect(
+      f.services.delivery.executeReassign({ ...call(sole), partnerId: 'DP-1' }).previous_partner
+        ?.status,
+    ).toBe('available');
   });
 
   it('assigns an unassigned delivery and rejects busy/offline/already assigned targets', () => {

@@ -271,6 +271,44 @@ describe('agent runs', () => {
       if (event.type === 'approval.required') break;
     expect(next.deps.approvals.size).toBe(0);
   });
+  it('turns a retryable read failure into a model-visible error and continues the run', async () => {
+    const f = fixture([
+      [call(), done],
+      [{ type: 'text_delta', delta: 'The lookup is unavailable' }, done],
+    ]);
+    f.deps.mcp.callTool = async () => {
+      throw new McpClientError('network', 'Unavailable', true);
+    };
+    const events = await collect(f.deps);
+    expect(events.find((e) => e.type === 'tool.result')).toMatchObject({
+      type: 'tool.result',
+      status: 'error',
+    });
+    expect(events.at(-1)?.type).toBe('run.completed');
+    expect(
+      f.requests[1]?.messages.some(
+        (m) =>
+          m.role === 'tool' &&
+          m.content === '{"error":"Tool temporarily unavailable; try again or tell the user"}',
+      ),
+    ).toBe(true);
+  });
+  it('still ends the run for non-retryable read failures and retryable write previews', async () => {
+    const hard = fixture([[call(), done]]);
+    hard.deps.mcp.callTool = async () => {
+      throw new McpClientError('auth', 'Rejected', false);
+    };
+    expect((await collect(hard.deps)).at(-1)).toMatchObject({ type: 'run.error', kind: 'auth' });
+    const preview = fixture([[call('cancel_order', { order_id: 'O', reason: 'ops' }), done]]);
+    preview.deps.mcp.callTool = async () => {
+      throw new McpClientError('network', 'Unavailable', true);
+    };
+    expect((await collect(preview.deps)).at(-1)).toMatchObject({
+      type: 'run.error',
+      kind: 'network',
+      retryable: true,
+    });
+  });
   it('reports an unknown execution outcome after the client exhausts safe recovery', async () => {
     const f = fixture([[call('cancel_order', { order_id: 'O', reason: 'ops' }), done]]);
     const original = f.deps.mcp.callTool;

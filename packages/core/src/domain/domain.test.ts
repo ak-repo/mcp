@@ -122,6 +122,18 @@ describe('policies', () => {
       expect(() => assertReassignment(status, 'available')).toThrow(AppError);
     }
   });
+  it.each(['picked_up', 'out_for_delivery', 'delivered', 'cancelled'] as const)(
+    'reports reassignment (not cancellation) when reassigning in %s',
+    (status) => {
+      expect(() => assertReassignment(status, 'available')).toThrow(
+        expect.objectContaining({
+          code: ErrorCode.INVALID_TRANSITION,
+          message: `Cannot reassign delivery for an order in ${status}`,
+          hint: 'Reassignment is allowed only before pickup',
+        }),
+      );
+    },
+  );
   it('rejects unavailable partners', () => {
     for (const status of ['busy', 'offline'] as const)
       expect(() => assertReassignment('ready', status)).toThrow(

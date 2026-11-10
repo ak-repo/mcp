@@ -60,7 +60,11 @@ it('rejects illegal transitions and delivery inconsistencies in both preview and
       expect.objectContaining({ code: ErrorCode.INVALID_TRANSITION }),
     );
     expect(() => method({ ...options, orderId, toStatus: 'picked_up' })).toThrow(
-      expect.objectContaining({ code: ErrorCode.NOT_FOUND }),
+      expect.objectContaining({
+        code: ErrorCode.CONFLICT,
+        message: 'No delivery partner is assigned',
+        hint: 'Reassign an available partner before advancing to picked_up',
+      }),
     );
   }
 });

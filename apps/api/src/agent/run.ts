@@ -223,13 +223,33 @@ export async function* runAgent(
             truncated: false,
           };
         else {
-          const raw = await deps.mcp.callTool(
-            call.name,
-            { ...call.arguments, ...(tool.kind === 'write' ? { action: 'preview' } : {}) },
-            { signal: combined, retry: true },
-          );
+          let raw: Awaited<ReturnType<McpConnection['callTool']>> | null;
+          try {
+            raw = await deps.mcp.callTool(
+              call.name,
+              { ...call.arguments, ...(tool.kind === 'write' ? { action: 'preview' } : {}) },
+              { signal: combined, retry: true },
+            );
+          } catch (error) {
+            // Only reads degrade gracefully; the client has already retried a retryable failure.
+            if (
+              tool.kind !== 'read' ||
+              !(error instanceof McpClientError) ||
+              !error.retryable ||
+              combined.aborted
+            )
+              throw error;
+            raw = null;
+          }
           check();
-          if (tool.kind === 'write' && !raw.isError) {
+          if (raw === null) {
+            result = {
+              text: '{"error":"Tool temporarily unavailable; try again or tell the user"}',
+              summary: 'Tool temporarily unavailable',
+              status: 'error',
+              truncated: false,
+            };
+          } else if (tool.kind === 'write' && !raw.isError) {
             const parsed = previewSchema.safeParse(raw.structuredContent);
             if (
               !parsed.success ||

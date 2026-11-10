@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { query } from './api.js';
 import { parseRefundAmount } from './refund-utils.js';
+import { paymentLabel } from './payment-label.js';
 
 describe('orders URL and refund utilities', () => {
   it('round-trips filters into stable query parameters', () => {
@@ -22,5 +23,14 @@ describe('orders URL and refund utilities', () => {
   });
   it('rejects amounts above the remaining balance', () => {
     expect(parseRefundAmount('20.01', 2000).error).toContain('exceeds');
+  });
+});
+
+describe('payment label', () => {
+  it('does not present a never-collected cancelled COD payment as outstanding', () => {
+    expect(paymentLabel({ status: 'pending' }, 'cancelled')).toBe('Not collected: order cancelled');
+    expect(paymentLabel({ status: 'pending' }, 'placed')).toBe('pending');
+    expect(paymentLabel({ status: 'refunded' }, 'cancelled')).toBe('refunded');
+    expect(paymentLabel(null, 'placed')).toBe('No payment');
   });
 });
